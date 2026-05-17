@@ -1,22 +1,30 @@
 {
-  "name": "loop-backend",
+  "name": "loop-frontend",
   "version": "1.0.0",
-  "description": "LOOP clothing brand backend",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
+  "private": true,
   "dependencies": {
-    "express": "^4.18.2",
-    "mongoose": "^7.0.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.0.3",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.0",
-    "razorpay": "^2.8.6"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.14.0",
+    "axios": "^1.4.0"
   },
+ "scripts": {
+  "start": "react-scripts start",
+  "build": "node node_modules/react-scripts/scripts/build.js"
+}
   "devDependencies": {
-    "nodemon": "^2.0.22"
+    "react-scripts": "5.0.1"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   }
 }
