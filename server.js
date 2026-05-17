@@ -7,6 +7,7 @@ dotenv.config();
 
 const app = express();
 const allowedOrigins = ['https://loop-frontend-five.vercel.app', 'http://localhost:3000'];
+
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -17,6 +18,9 @@ app.use(cors({
   },
   credentials: true
 }));
+
+// Handle preflight requests explicitly
+app.options('*', cors());
 app.use(express.json());
 
 // Import Models
