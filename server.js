@@ -7,16 +7,14 @@ dotenv.config();
 
 const app = express();
 
-// ✅ SIMPLE CORS - Allow all origins (temporary fix for development)
+// ✅ CORS - Allow all origins (temporary for testing)
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Handle preflight requests
 app.options('*', cors());
-
 app.use(express.json());
 
 // Import Models
@@ -24,10 +22,13 @@ const Product = require('./models/Product');
 const Coupon = require('./models/Coupon');
 const Order = require('./models/Order');
 
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch(err => console.log('❌ MongoDB error:', err));
+// ✅ MongoDB connection with timeout options
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 30000,
+  connectTimeoutMS: 30000,
+})
+.then(() => console.log('✅ MongoDB connected'))
+.catch(err => console.log('❌ MongoDB error:', err));
 
 // ============ TEST ROUTE ============
 app.get('/', (req, res) => {
@@ -36,7 +37,6 @@ app.get('/', (req, res) => {
 
 // ============ PRODUCT ROUTES ============
 
-// Get all products
 app.get('/api/products', async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
@@ -46,7 +46,6 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Get single product
 app.get('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -57,7 +56,6 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// Create product
 app.post('/api/products', async (req, res) => {
   try {
     const product = new Product(req.body);
@@ -68,7 +66,6 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
-// Update product
 app.put('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -78,7 +75,6 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-// Delete product
 app.delete('/api/products/:id', async (req, res) => {
   try {
     await Product.findByIdAndDelete(req.params.id);
@@ -90,7 +86,6 @@ app.delete('/api/products/:id', async (req, res) => {
 
 // ============ COUPON ROUTES ============
 
-// Get all coupons
 app.get('/api/coupons', async (req, res) => {
   try {
     const coupons = await Coupon.find().sort({ createdAt: -1 });
@@ -100,7 +95,6 @@ app.get('/api/coupons', async (req, res) => {
   }
 });
 
-// Create coupon
 app.post('/api/coupons', async (req, res) => {
   try {
     const coupon = new Coupon(req.body);
@@ -111,7 +105,6 @@ app.post('/api/coupons', async (req, res) => {
   }
 });
 
-// Update coupon
 app.put('/api/coupons/:id', async (req, res) => {
   try {
     const coupon = await Coupon.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -121,7 +114,6 @@ app.put('/api/coupons/:id', async (req, res) => {
   }
 });
 
-// Delete coupon
 app.delete('/api/coupons/:id', async (req, res) => {
   try {
     await Coupon.findByIdAndDelete(req.params.id);
@@ -131,7 +123,6 @@ app.delete('/api/coupons/:id', async (req, res) => {
   }
 });
 
-// Validate coupon
 app.post('/api/coupons/validate', async (req, res) => {
   try {
     const { code } = req.body;
@@ -163,7 +154,6 @@ app.post('/api/coupons/validate', async (req, res) => {
 
 // ============ ORDER ROUTES ============
 
-// Get all orders
 app.get('/api/orders', async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
@@ -173,7 +163,6 @@ app.get('/api/orders', async (req, res) => {
   }
 });
 
-// Get single order
 app.get('/api/orders/:id', async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
@@ -184,10 +173,8 @@ app.get('/api/orders/:id', async (req, res) => {
   }
 });
 
-// Create order
 app.post('/api/orders', async (req, res) => {
   try {
-    // Generate unique order ID
     const orderCount = await Order.countDocuments();
     const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
     
@@ -202,7 +189,6 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-// Update order status
 app.put('/api/orders/:id', async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(
@@ -216,7 +202,6 @@ app.put('/api/orders/:id', async (req, res) => {
   }
 });
 
-// Delete order
 app.delete('/api/orders/:id', async (req, res) => {
   try {
     await Order.findByIdAndDelete(req.params.id);
