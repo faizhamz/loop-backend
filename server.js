@@ -6,27 +6,39 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-const allowedOrigins = ['https://loop-frontend-five.vercel.app', 'http://localhost:3000'];
+
+// ✅ CORS configuration - Allow all necessary origins
+const allowedOrigins = [
+  'https://loop-frontend-five.vercel.app',
+  'https://www.loopstore.in',
+  'https://loopstore.in',
+  'http://localhost:3000'
+];
 
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
     }
+    return callback(null, true);
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Handle preflight requests explicitly
+// Handle preflight requests
 app.options('*', cors());
+
 app.use(express.json());
 
 // Import Models
 const Product = require('./models/Product');
 const Coupon = require('./models/Coupon');
-const Order = require('./models/Order');  // ← ADD THIS
+const Order = require('./models/Order');
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
