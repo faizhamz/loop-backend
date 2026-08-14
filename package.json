@@ -1,7 +1,7 @@
 {
   "name": "loop-backend",
   "version": "1.0.0",
-  "description": "LOOP clothing brand backend",
+  "description": "LOOP clothing brand backend API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
