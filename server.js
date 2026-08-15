@@ -50,18 +50,51 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Get product by productId (LOOP0001) or by ID
-app.get('/api/products/:id', async (req, res) => {
+// 🔥 NEW: Get product by productId, ID, or Name (slug)
+app.get('/api/products/:slug', async (req, res) => {
   try {
-    // First try to find by productId
-    let product = await Product.findOne({ productId: req.params.id });
-    // If not found, try by MongoDB _id
-    if (!product && mongoose.Types.ObjectId.isValid(req.params.id)) {
-      product = await Product.findById(req.params.id);
+    const slug = req.params.slug;
+    let product = null;
+
+    // 1. Try by productId first (e.g., LOOP0001, SPIDEY001)
+    product = await Product.findOne({ productId: slug });
+
+    // 2. If not found, try by MongoDB _id
+    if (!product && mongoose.Types.ObjectId.isValid(slug)) {
+      product = await Product.findById(slug);
     }
+
+    // 3. If not found, try by name (e.g., spidey, sonic-speedster-tee)
+    if (!product) {
+      const nameSlug = slug.replace(/-/g, ' ');
+      product = await Product.findOne({
+        name: { $regex: new RegExp(`^${nameSlug}$`, 'i') }
+      });
+    }
+
+    // 4. If still not found, try partial name match
+    if (!product) {
+      product = await Product.findOne({
+        name: { $regex: new RegExp(slug.replace(/-/g, ' '), 'i') }
+      });
+    }
+
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
+
+    res.json(product);
+  } catch (err) {
+    console.error('Error fetching product:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get product by MongoDB _id (for admin panel)
+app.get('/api/products/id/:id', async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
     res.json(product);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -71,7 +104,7 @@ app.get('/api/products/:id', async (req, res) => {
 // Create product
 app.post('/api/products', async (req, res) => {
   try {
-    // If custom productId is provided, check if it's unique
+    // If custom productId is provided, check uniqueness
     if (req.body.productId) {
       const existing = await Product.findOne({ productId: req.body.productId });
       if (existing) {
@@ -91,7 +124,7 @@ app.put('/api/products/:id', async (req, res) => {
   try {
     // If productId is being changed, check uniqueness
     if (req.body.productId) {
-      const existing = await Product.findOne({ 
+      const existing = await Product.findOne({
         productId: req.body.productId,
         _id: { $ne: req.params.id }
       });
@@ -116,7 +149,6 @@ app.delete('/api/products/:id', async (req, res) => {
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    // Soft delete - mark as inactive but keep in database
     product.isActive = false;
     product.status = 'discontinued';
     await product.save();
@@ -126,10 +158,10 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// Toggle product status (active/inactive/discontinued)
+// Toggle product status
 app.patch('/api/products/:id/status', async (req, res) => {
   try {
-    const { status } = req.body; // 'active', 'inactive', 'discontinued'
+    const { status } = req.body;
     const product = await Product.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
@@ -206,31 +238,31 @@ app.post('/api/coupons/validate', async (req, res) => {
   try {
     const { code, userId, cartTotal } = req.body;
     const coupon = await Coupon.findOne({ code, isActive: true, isDeleted: false });
-    
+
     if (!coupon) {
       return res.status(404).json({ valid: false, message: 'Invalid coupon code' });
     }
-    
+
     const now = new Date();
     if (coupon.validUntil && now > coupon.validUntil) {
       return res.status(400).json({ valid: false, message: 'Coupon has expired' });
     }
-    
+
     if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
       return res.status(400).json({ valid: false, message: 'Coupon usage limit reached' });
     }
-    
+
     if (coupon.userSpecific && coupon.userId.toString() !== userId) {
       return res.status(400).json({ valid: false, message: 'This coupon is not valid for your account' });
     }
-    
+
     if (coupon.minOrderValue > 0 && cartTotal < coupon.minOrderValue) {
-      return res.status(400).json({ 
-        valid: false, 
-        message: `Minimum order of ₹${coupon.minOrderValue} required` 
+      return res.status(400).json({
+        valid: false,
+        message: `Minimum order of ₹${coupon.minOrderValue} required`
       });
     }
-    
+
     let discountAmount = 0;
     if (coupon.discountType === 'percentage') {
       discountAmount = (cartTotal * coupon.discountValue) / 100;
@@ -240,9 +272,9 @@ app.post('/api/coupons/validate', async (req, res) => {
     } else if (coupon.discountType === 'fixed') {
       discountAmount = coupon.discountValue;
     }
-    
-    res.json({ 
-      valid: true, 
+
+    res.json({
+      valid: true,
       discountAmount,
       discountPercent: coupon.discountType === 'percentage' ? coupon.discountValue : 0,
       message: 'Coupon applied successfully'
@@ -257,11 +289,11 @@ app.post('/api/coupons/assign-to-user', async (req, res) => {
     const { userId, discountValue, validDays, reason } = req.body;
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    
+
     const code = `INSTA-${user.refId || user.name.substring(0,4).toUpperCase()}-${discountValue}`;
     const validUntil = new Date();
     validUntil.setDate(validUntil.getDate() + validDays);
-    
+
     const coupon = new Coupon({
       code,
       name: `${reason} Reward`,
@@ -274,9 +306,9 @@ app.post('/api/coupons/assign-to-user', async (req, res) => {
       usageLimit: 1,
       perUserLimit: 1
     });
-    
+
     await coupon.save();
-    
+
     user.coupons = user.coupons || [];
     user.coupons.push({
       code,
@@ -284,7 +316,7 @@ app.post('/api/coupons/assign-to-user', async (req, res) => {
       expiresAt: validUntil
     });
     await user.save();
-    
+
     res.json({ coupon, user });
   } catch (err) {
     res.status(400).json({ error: err.message });
