@@ -24,6 +24,7 @@ const Product = require('./models/Product');
 const Coupon = require('./models/Coupon');
 const Order = require('./models/Order');
 const User = require('./models/User');
+const PaymentMethod = require('./models/PaymentMethod');
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -50,21 +51,21 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// 🔥 NEW: Get product by productId, ID, or Name (slug)
+// Get product by slug (productId, ID, or name)
 app.get('/api/products/:slug', async (req, res) => {
   try {
     const slug = req.params.slug;
     let product = null;
 
-    // 1. Try by productId first (e.g., LOOP0001, SPIDEY001)
+    // 1. Try by productId
     product = await Product.findOne({ productId: slug });
 
-    // 2. If not found, try by MongoDB _id
+    // 2. Try by MongoDB _id
     if (!product && mongoose.Types.ObjectId.isValid(slug)) {
       product = await Product.findById(slug);
     }
 
-    // 3. If not found, try by name (e.g., spidey, sonic-speedster-tee)
+    // 3. Try by name
     if (!product) {
       const nameSlug = slug.replace(/-/g, ' ');
       product = await Product.findOne({
@@ -72,7 +73,7 @@ app.get('/api/products/:slug', async (req, res) => {
       });
     }
 
-    // 4. If still not found, try partial name match
+    // 4. Try partial name match
     if (!product) {
       product = await Product.findOne({
         name: { $regex: new RegExp(slug.replace(/-/g, ' '), 'i') }
@@ -90,7 +91,7 @@ app.get('/api/products/:slug', async (req, res) => {
   }
 });
 
-// Get product by MongoDB _id (for admin panel)
+// Get product by MongoDB _id (for admin)
 app.get('/api/products/id/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -104,7 +105,6 @@ app.get('/api/products/id/:id', async (req, res) => {
 // Create product
 app.post('/api/products', async (req, res) => {
   try {
-    // If custom productId is provided, check uniqueness
     if (req.body.productId) {
       const existing = await Product.findOne({ productId: req.body.productId });
       if (existing) {
@@ -122,7 +122,6 @@ app.post('/api/products', async (req, res) => {
 // Update product
 app.put('/api/products/:id', async (req, res) => {
   try {
-    // If productId is being changed, check uniqueness
     if (req.body.productId) {
       const existing = await Product.findOne({
         productId: req.body.productId,
@@ -142,7 +141,7 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-// Delete product - SOFT DELETE (mark as inactive)
+// Soft delete product
 app.delete('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -555,6 +554,68 @@ app.get('/api/auth/me', async (req, res) => {
     res.json(user);
   } catch (err) {
     res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// ============ PAYMENT METHOD ROUTES ============
+
+// Get all payment methods
+app.get('/api/payment-methods', async (req, res) => {
+  try {
+    const methods = await PaymentMethod.find().sort({ createdAt: -1 });
+    res.json(methods);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get active payment method
+app.get('/api/payment-methods/active', async (req, res) => {
+  try {
+    const active = await PaymentMethod.findOne({ isActive: true });
+    res.json(active || null);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create payment method
+app.post('/api/payment-methods', async (req, res) => {
+  try {
+    const { upiId, qrCode, name } = req.body;
+    const method = new PaymentMethod({ upiId, qrCode, name });
+    await method.save();
+    res.status(201).json(method);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update payment method (activate/deactivate)
+app.put('/api/payment-methods/:id', async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    if (isActive) {
+      await PaymentMethod.updateMany({}, { isActive: false });
+    }
+    const method = await PaymentMethod.findByIdAndUpdate(
+      req.params.id,
+      { isActive },
+      { new: true }
+    );
+    res.json(method);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete payment method
+app.delete('/api/payment-methods/:id', async (req, res) => {
+  try {
+    await PaymentMethod.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Payment method deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
