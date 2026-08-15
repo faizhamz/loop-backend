@@ -170,7 +170,7 @@ app.patch('/api/coupons/:id/toggle', async (req, res) => {
   }
 });
 
-// Validate coupon (enhanced)
+// Validate coupon
 app.post('/api/coupons/validate', async (req, res) => {
   try {
     const { code, userId, cartTotal } = req.body;
