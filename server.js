@@ -49,8 +49,21 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Get single product
-app.get('/api/products/:id', async (req, res) => {
+// 🔥 NEW: Get product by productId (e.g., LOOP0001)
+app.get('/api/products/:productId', async (req, res) => {
+  try {
+    const product = await Product.findOne({ productId: req.params.productId });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    res.json(product);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get product by MongoDB _id (for admin panel)
+app.get('/api/products/id/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
@@ -429,6 +442,142 @@ app.post('/api/users/:id/wallet', async (req, res) => {
     res.json({ balance: user.wallet.balance });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// ============ AUTH ROUTES ============
+const jwt = require('jsonwebtoken');
+
+// Signup
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { name, email, phone, password } = req.body;
+    
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Create user
+    const user = new User({
+      name,
+      email,
+      phone,
+      password: hashedPassword,
+      emailVerified: true,
+      isActive: true
+    });
+    
+    await user.save();
+    
+    // Generate token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        refId: user.refId
+      }
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Check password
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+    
+    // Generate token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        refId: user.refId,
+        walletBalance: user.wallet?.balance || 0
+      }
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Forgot password
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: 'Email not found' });
+    }
+    
+    // Generate reset token
+    const resetToken = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+    
+    res.json({ message: 'Password reset link sent to your email' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get current user
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(user);
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
   }
 });
 
