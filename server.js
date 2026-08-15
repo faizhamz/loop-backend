@@ -25,6 +25,10 @@ const Coupon = require('./models/Coupon');
 const Order = require('./models/Order');
 const User = require('./models/User');
 const PaymentMethod = require('./models/PaymentMethod');
+const Banner = require('./models/Banner');
+
+// Import Routes
+const bannerRoutes = require('./routes/bannerRoutes');
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -38,6 +42,9 @@ mongoose.connect(process.env.MONGODB_URI, {
 app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
 });
+
+// ============ BANNER ROUTES ============
+app.use('/api/banners', bannerRoutes);
 
 // ============ PRODUCT ROUTES ============
 
