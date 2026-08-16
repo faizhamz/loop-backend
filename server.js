@@ -9,11 +9,34 @@ dotenv.config();
 
 const app = express();
 
-// ✅ CORS - Allow all origins
+// ============================================
+// ✅ FIXED: CORS - Allow only trusted origins
+// ============================================
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://loop-frontend.vercel.app',
+  'https://loop-clothing.vercel.app',
+  'https://loop-frontend-git-master.vercel.app',
+  'https://loop-store.vercel.app',
+  // Add your production domain here
+];
+
 app.use(cors({
-  origin: '*',
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      console.warn(`❌ CORS blocked: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
 app.options('*', cors());
@@ -38,7 +61,9 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const variantRoutes = require('./routes/variantRoutes');
 
-// MongoDB connection
+// ============================================
+// MONGODB CONNECTION
+// ============================================
 mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 30000,
   connectTimeoutMS: 30000,
@@ -46,78 +71,135 @@ mongoose.connect(process.env.MONGODB_URI, {
 .then(() => console.log('✅ MongoDB connected'))
 .catch(err => console.log('❌ MongoDB error:', err));
 
-// ============ AUTH MIDDLEWARE ============
+// ============================================
+// ✅ FIXED: AUTH MIDDLEWARE
+// ============================================
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
+  
   if (!token) {
     req.userId = null;
+    req.userRole = null;
     return next();
   }
+  
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
+    req.userRole = decoded.role || 'user';
     next();
   } catch (err) {
     req.userId = null;
+    req.userRole = null;
     next();
   }
 };
 
-// ============ TEST ROUTE ============
+// ============================================
+// ✅ FIXED: ADMIN MIDDLEWARE
+// ============================================
+const adminMiddleware = async (req, res, next) => {
+  try {
+    // Check if user is authenticated
+    if (!req.userId) {
+      return res.status(401).json({ 
+        error: 'Authentication required. Please login first.' 
+      });
+    }
+    
+    // Get user from database
+    const user = await User.findById(req.userId).select('-password');
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    
+    // Check if user has admin role
+    if (user.role !== 'admin') {
+      return res.status(403).json({ 
+        error: 'Access denied. Admin privileges required.' 
+      });
+    }
+    
+    // Attach user to request
+    req.adminUser = user;
+    next();
+  } catch (err) {
+    console.error('Admin middleware error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// ============================================
+// OPTIONAL AUTH MIDDLEWARE
+// ============================================
+const optionalAuthMiddleware = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.userId = decoded.userId;
+      req.userRole = decoded.role || 'user';
+    } catch (err) {
+      // Invalid token, but we continue
+    }
+  }
+  next();
+};
+
+// ============================================
+// TEST ROUTE
+// ============================================
 app.get('/', (req, res) => {
-  res.json({ message: 'LOOP API is running' });
+  res.json({ 
+    message: 'LOOP API is running',
+    version: '1.0.0',
+    status: 'healthy'
+  });
 });
 
-// ============ BANNER ROUTES ============
+// ============================================
+// ROUTES
+// ============================================
 app.use('/api/banners', bannerRoutes);
-
-// ============ REVIEW ROUTES ============
 app.use('/api/reviews', authMiddleware, reviewRoutes);
-
-// ============ CONTACT ROUTES ============
 app.use('/api/contact', contactRoutes);
-
-// ============ NOTIFICATION ROUTES ============
 app.use('/api/notifications', notificationRoutes);
-
-// ============ VARIANT ROUTES ============
 app.use('/api/variants', authMiddleware, variantRoutes);
 
-// ============ PRODUCT ROUTES ============
+// ============================================
+// ✅ FIXED: PRODUCT ROUTES
+// ============================================
 
-// Get all products
+// Get all products (public)
 app.get('/api/products', async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
     res.json(products);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error fetching products:', err);
+    res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
 
-// Get product by slug (productId, ID, or name)
+// Get product by slug (public)
 app.get('/api/products/:slug', async (req, res) => {
   try {
     const slug = req.params.slug;
     let product = null;
 
-    // 1. Try by productId
     product = await Product.findOne({ productId: slug });
-
-    // 2. Try by MongoDB _id
+    
     if (!product && mongoose.Types.ObjectId.isValid(slug)) {
       product = await Product.findById(slug);
     }
-
-    // 3. Try by name
+    
     if (!product) {
       const nameSlug = slug.replace(/-/g, ' ');
       product = await Product.findOne({
         name: { $regex: new RegExp(`^${nameSlug}$`, 'i') }
       });
     }
-
-    // 4. Try partial name match
+    
     if (!product) {
       product = await Product.findOne({
         name: { $regex: new RegExp(slug.replace(/-/g, ' '), 'i') }
@@ -131,12 +213,12 @@ app.get('/api/products/:slug', async (req, res) => {
     res.json(product);
   } catch (err) {
     console.error('Error fetching product:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to fetch product' });
   }
 });
 
-// Get product by MongoDB _id (for admin)
-app.get('/api/products/id/:id', async (req, res) => {
+// Get product by ID (admin only)
+app.get('/api/products/id/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ error: 'Product not found' });
@@ -146,25 +228,26 @@ app.get('/api/products/id/:id', async (req, res) => {
   }
 });
 
-// Create product
-app.post('/api/products', async (req, res) => {
+// ✅ FIXED: Create product (admin only)
+app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.body.productId) {
       const existing = await Product.findOne({ productId: req.body.productId });
       if (existing) {
-        return res.status(400).json({ error: 'Product ID already exists. Please use a different ID.' });
+        return res.status(400).json({ error: 'Product ID already exists' });
       }
     }
     const product = new Product(req.body);
     await product.save();
     res.status(201).json(product);
   } catch (err) {
+    console.error('Error creating product:', err);
     res.status(400).json({ error: err.message });
   }
 });
 
-// Update product
-app.put('/api/products/:id', async (req, res) => {
+// ✅ FIXED: Update product (admin only)
+app.put('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.body.productId) {
       const existing = await Product.findOne({
@@ -172,7 +255,7 @@ app.put('/api/products/:id', async (req, res) => {
         _id: { $ne: req.params.id }
       });
       if (existing) {
-        return res.status(400).json({ error: 'Product ID already exists. Please use a different ID.' });
+        return res.status(400).json({ error: 'Product ID already exists' });
       }
     }
     const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -181,27 +264,27 @@ app.put('/api/products/:id', async (req, res) => {
     }
     res.json(product);
   } catch (err) {
+    console.error('Error updating product:', err);
     res.status(400).json({ error: err.message });
   }
 });
 
-// ============ DELETE PRODUCT (Hard Delete) ============
-app.delete('/api/products/:id', async (req, res) => {
+// ✅ FIXED: Delete product (admin only)
+app.delete('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    res.json({ message: 'Product deleted successfully', productId: req.params.id });
+    res.json({ message: 'Product deleted successfully' });
   } catch (err) {
     console.error('Error deleting product:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-
-// Toggle product status
-app.patch('/api/products/:id/status', async (req, res) => {
+// Toggle product status (admin only)
+app.patch('/api/products/:id/status', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { status } = req.body;
     const product = await Product.findById(req.params.id);
@@ -217,8 +300,12 @@ app.patch('/api/products/:id/status', async (req, res) => {
   }
 });
 
-// ============ COUPON ROUTES ============
-app.get('/api/coupons', async (req, res) => {
+// ============================================
+// ✅ FIXED: COUPON ROUTES
+// ============================================
+
+// Get all coupons (admin only)
+app.get('/api/coupons', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const coupons = await Coupon.find().sort({ createdAt: -1 });
     res.json(coupons);
@@ -227,7 +314,8 @@ app.get('/api/coupons', async (req, res) => {
   }
 });
 
-app.get('/api/coupons/:id', async (req, res) => {
+// Get single coupon (admin only)
+app.get('/api/coupons/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const coupon = await Coupon.findById(req.params.id);
     if (!coupon) return res.status(404).json({ error: 'Coupon not found' });
@@ -237,7 +325,8 @@ app.get('/api/coupons/:id', async (req, res) => {
   }
 });
 
-app.post('/api/coupons', async (req, res) => {
+// Create coupon (admin only)
+app.post('/api/coupons', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const coupon = new Coupon(req.body);
     await coupon.save();
@@ -247,7 +336,8 @@ app.post('/api/coupons', async (req, res) => {
   }
 });
 
-app.put('/api/coupons/:id', async (req, res) => {
+// Update coupon (admin only)
+app.put('/api/coupons/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const coupon = await Coupon.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json(coupon);
@@ -256,7 +346,8 @@ app.put('/api/coupons/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/coupons/:id', async (req, res) => {
+// Delete coupon (admin only)
+app.delete('/api/coupons/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     await Coupon.findByIdAndDelete(req.params.id);
     res.json({ message: 'Coupon deleted' });
@@ -265,7 +356,8 @@ app.delete('/api/coupons/:id', async (req, res) => {
   }
 });
 
-app.patch('/api/coupons/:id/toggle', async (req, res) => {
+// Toggle coupon (admin only)
+app.patch('/api/coupons/:id/toggle', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const coupon = await Coupon.findById(req.params.id);
     coupon.isActive = !coupon.isActive;
@@ -276,10 +368,11 @@ app.patch('/api/coupons/:id/toggle', async (req, res) => {
   }
 });
 
-app.post('/api/coupons/validate', async (req, res) => {
+// Validate coupon (public)
+app.post('/api/coupons/validate', optionalAuthMiddleware, async (req, res) => {
   try {
     const { code, userId, cartTotal } = req.body;
-    const coupon = await Coupon.findOne({ code, isActive: true, isDeleted: false });
+    const coupon = await Coupon.findOne({ code: code.toUpperCase(), isActive: true, isDeleted: false });
 
     if (!coupon) {
       return res.status(404).json({ valid: false, message: 'Invalid coupon code' });
@@ -326,7 +419,8 @@ app.post('/api/coupons/validate', async (req, res) => {
   }
 });
 
-app.post('/api/coupons/assign-to-user', async (req, res) => {
+// Assign coupon to user (admin only)
+app.post('/api/coupons/assign-to-user', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { userId, discountValue, validDays, reason } = req.body;
     const user = await User.findById(userId);
@@ -365,7 +459,8 @@ app.post('/api/coupons/assign-to-user', async (req, res) => {
   }
 });
 
-app.post('/api/coupons/bulk-generate', async (req, res) => {
+// Bulk generate coupons (admin only)
+app.post('/api/coupons/bulk-generate', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { count, discountType, discountValue, validDays } = req.body;
     const coupons = [];
@@ -390,61 +485,89 @@ app.post('/api/coupons/bulk-generate', async (req, res) => {
   }
 });
 
-// ============ ORDER ROUTES ============
+// ============================================
+// ORDER ROUTES
+// ============================================
 app.use('/api/orders', authMiddleware, orderRoutes);
 
-// ============ USER ROUTES ============
-app.get('/api/users', async (req, res) => {
+// ============================================
+// ✅ FIXED: USER ROUTES
+// ============================================
+
+// Get all users (admin only)
+app.get('/api/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const users = await User.find().sort({ createdAt: -1 });
+    const users = await User.find().sort({ createdAt: -1 }).select('-password');
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/users/:id', async (req, res) => {
+// Get single user (admin or self)
+app.get('/api/users/:id', authMiddleware, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await User.findById(req.params.id).select('-password');
     if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    // Check if user is viewing their own profile or is admin
+    if (req.userId !== req.params.id && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     res.json(user);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+// Create user (public)
 app.post('/api/users', async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(req.body.password, 10);
     const user = new User({ ...req.body, password: hashedPassword });
     await user.save();
-    res.status(201).json(user);
+    // Don't return password
+    const { password, ...userWithoutPassword } = user.toObject();
+    res.status(201).json(userWithoutPassword);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.put('/api/users/:id', async (req, res) => {
+// Update user (admin or self)
+app.put('/api/users/:id', authMiddleware, async (req, res) => {
   try {
-    const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // Users can update their own profile, admins can update any
+    if (req.userId !== req.params.id && req.userRole !== 'admin') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    
+    // Don't allow password update here
+    const { password, ...updateData } = req.body;
+    const user = await User.findByIdAndUpdate(req.params.id, updateData, { new: true }).select('-password');
+    if (!user) return res.status(404).json({ error: 'User not found' });
     res.json(user);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.delete('/api/users/:id', async (req, res) => {
+// Delete user (admin only)
+app.delete('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ message: 'User deleted' });
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'User deleted successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.patch('/api/users/:id/toggle', async (req, res) => {
+// Toggle user status (admin only)
+app.patch('/api/users/:id/toggle', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
     user.isActive = !user.isActive;
     await user.save();
     res.json({ isActive: user.isActive });
@@ -453,17 +576,20 @@ app.patch('/api/users/:id/toggle', async (req, res) => {
   }
 });
 
-app.post('/api/users/:id/wallet', async (req, res) => {
+// Add wallet credit (admin only)
+app.post('/api/users/:id/wallet', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { amount, description, expiresInDays } = req.body;
+    const { amount, description } = req.body;
     const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
     user.wallet = user.wallet || { balance: 0, transactions: [] };
     user.wallet.balance += amount;
     user.wallet.transactions.push({
       amount,
       type: 'credit',
-      description,
-      expiresAt: expiresInDays ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000) : null
+      description: description || 'Admin credit',
+      createdAt: new Date()
     });
     await user.save();
     res.json({ balance: user.wallet.balance });
@@ -472,23 +598,52 @@ app.post('/api/users/:id/wallet', async (req, res) => {
   }
 });
 
-// ============ AUTH ROUTES ============
+// ============================================
+// AUTH ROUTES
+// ============================================
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { name, email, phone, password } = req.body;
+    
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required' });
+    }
+    
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ error: 'Email already registered' });
     }
+    
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email, phone, password: hashedPassword, emailVerified: true, isActive: true });
+    const user = new User({ 
+      name, 
+      email, 
+      phone: phone || '', 
+      password: hashedPassword, 
+      emailVerified: true, 
+      isActive: true 
+    });
     await user.save();
-    const token = jwt.sign({ userId: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '30d' }
+    );
+    
     res.status(201).json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, refId: user.refId }
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email: user.email, 
+        refId: user.refId,
+        role: user.role
+      }
     });
   } catch (err) {
+    console.error('Signup error:', err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -496,17 +651,30 @@ app.post('/api/auth/signup', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    
     user.lastLogin = new Date();
     await user.save();
-    const token = jwt.sign({ userId: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '30d' }
+    );
+    
     res.json({
       token,
       user: {
@@ -514,10 +682,12 @@ app.post('/api/auth/login', async (req, res) => {
         name: user.name,
         email: user.email,
         refId: user.refId,
+        role: user.role,
         walletBalance: user.wallet?.balance || 0
       }
     });
   } catch (err) {
+    console.error('Login error:', err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -529,21 +699,16 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'Email not found' });
     }
-    const resetToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    // In production, send email with reset link
     res.json({ message: 'Password reset link sent to your email' });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.get('/api/auth/me', async (req, res) => {
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
+    const user = await User.findById(req.userId).select('-password');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -553,10 +718,12 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
-// ============ PAYMENT METHOD ROUTES ============
+// ============================================
+// ✅ FIXED: PAYMENT METHOD ROUTES
+// ============================================
 
-// Get all payment methods
-app.get('/api/payment-methods', async (req, res) => {
+// Get all payment methods (admin only)
+app.get('/api/payment-methods', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const methods = await PaymentMethod.find().sort({ createdAt: -1 });
     res.json(methods);
@@ -565,7 +732,7 @@ app.get('/api/payment-methods', async (req, res) => {
   }
 });
 
-// Get active payment method
+// Get active payment method (public)
 app.get('/api/payment-methods/active', async (req, res) => {
   try {
     const active = await PaymentMethod.findOne({ isActive: true });
@@ -575,8 +742,8 @@ app.get('/api/payment-methods/active', async (req, res) => {
   }
 });
 
-// Create payment method
-app.post('/api/payment-methods', async (req, res) => {
+// Create payment method (admin only)
+app.post('/api/payment-methods', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { upiId, qrCode, name } = req.body;
     const method = new PaymentMethod({ upiId, qrCode, name });
@@ -587,8 +754,8 @@ app.post('/api/payment-methods', async (req, res) => {
   }
 });
 
-// Update payment method (activate/deactivate)
-app.put('/api/payment-methods/:id', async (req, res) => {
+// Update payment method (admin only)
+app.put('/api/payment-methods/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { isActive } = req.body;
     if (isActive) {
@@ -605,8 +772,8 @@ app.put('/api/payment-methods/:id', async (req, res) => {
   }
 });
 
-// Delete payment method
-app.delete('/api/payment-methods/:id', async (req, res) => {
+// Delete payment method (admin only)
+app.delete('/api/payment-methods/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     await PaymentMethod.findByIdAndDelete(req.params.id);
     res.json({ message: 'Payment method deleted' });
@@ -615,9 +782,22 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
   }
 });
 
-// ============ CONTACT ROUTES (already registered above) ============
+// ============================================
+// ERROR HANDLING MIDDLEWARE
+// ============================================
+app.use((err, req, res, next) => {
+  console.error('Error:', err.stack);
+  res.status(500).json({ 
+    error: 'Something went wrong!',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
 
+// ============================================
+// START SERVER
+// ============================================
 const PORT = process.env.PORT || 5002;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
