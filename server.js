@@ -28,11 +28,15 @@ const PaymentMethod = require('./models/PaymentMethod');
 const Banner = require('./models/Banner');
 const Review = require('./models/Review');
 const Contact = require('./models/Contact');
+const Notification = require('./models/Notification');
 
 // Import Routes
 const bannerRoutes = require('./routes/bannerRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const contactRoutes = require('./routes/contactRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+const variantRoutes = require('./routes/variantRoutes');
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -72,6 +76,12 @@ app.use('/api/reviews', authMiddleware, reviewRoutes);
 
 // ============ CONTACT ROUTES ============
 app.use('/api/contact', contactRoutes);
+
+// ============ NOTIFICATION ROUTES ============
+app.use('/api/notifications', notificationRoutes);
+
+// ============ VARIANT ROUTES ============
+app.use('/api/variants', authMiddleware, variantRoutes);
 
 // ============ PRODUCT ROUTES ============
 
@@ -382,7 +392,6 @@ app.post('/api/coupons/bulk-generate', async (req, res) => {
 });
 
 // ============ ORDER ROUTES ============
-const orderRoutes = require('./routes/orderRoutes');
 app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ============ USER ROUTES ============
