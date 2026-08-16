@@ -19,7 +19,9 @@ const allowedOrigins = [
   'https://loop-clothing.vercel.app',
   'https://loop-frontend-git-master.vercel.app',
   'https://loop-store.vercel.app',
-  // Add your production domain here
+  'https://www.loopstore.in',
+  'https://loopstore.in',
+  'https://loop-backend-jwke.onrender.com',  // Allow backend itself
 ];
 
 app.use(cors({
