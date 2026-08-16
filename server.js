@@ -185,21 +185,20 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-// Soft delete product
+// ============ DELETE PRODUCT (Hard Delete) ============
 app.delete('/api/products/:id', async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await Product.findByIdAndDelete(req.params.id);
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    product.isActive = false;
-    product.status = 'discontinued';
-    await product.save();
-    res.json({ message: 'Product discontinued', product });
+    res.json({ message: 'Product deleted successfully', productId: req.params.id });
   } catch (err) {
+    console.error('Error deleting product:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // Toggle product status
 app.patch('/api/products/:id/status', async (req, res) => {
