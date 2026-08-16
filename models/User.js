@@ -1,5 +1,18 @@
 const mongoose = require('mongoose');
 
+const addressSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  street: { type: String, required: true },
+  city: { type: String, required: true },
+  state: { type: String, required: true },
+  pincode: { type: String, required: true },
+  country: { type: String, default: 'India' },
+  phone: { type: String },
+  landmark: { type: String, default: '' },
+  isDefault: { type: Boolean, default: false },
+  label: { type: String, enum: ['Home', 'Work', 'Other'], default: 'Home' }
+});
+
 const userSchema = new mongoose.Schema({
   refId: { type: String, unique: true },
   name: { type: String, required: true },
@@ -11,6 +24,8 @@ const userSchema = new mongoose.Schema({
   phoneVerified: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
+  
+  // Wallet
   wallet: {
     balance: { type: Number, default: 0 },
     transactions: [{
@@ -21,16 +36,14 @@ const userSchema = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now }
     }]
   },
-  addresses: [{
-    name: String,
-    street: String,
-    city: String,
-    state: String,
-    pincode: String,
-    country: { type: String, default: 'India' },
-    isDefault: { type: Boolean, default: false }
-  }],
+  
+  // NEW: Addresses (multiple)
+  addresses: [addressSchema],
+  
+  // Wishlist
   wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+  
+  // Coupons
   coupons: [{
     code: String,
     discountPercent: Number,
@@ -39,14 +52,21 @@ const userSchema = new mongoose.Schema({
     usedAt: Date,
     expiresAt: Date
   }],
+  
+  // Order references
   orderIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Order' }],
   totalSpent: { type: Number, default: 0 },
+  
+  // Review references (NEW)
+  reviewIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Review' }],
+  
   lastLogin: Date,
   loginHistory: [{
     ip: String,
     userAgent: String,
     timestamp: { type: Date, default: Date.now }
   }],
+  
   notes: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
@@ -54,6 +74,7 @@ const userSchema = new mongoose.Schema({
 
 // Generate refId before saving
 userSchema.pre('save', async function(next) {
+  this.updatedAt = new Date();
   if (!this.refId) {
     const count = await mongoose.model('User').countDocuments();
     const namePart = this.name ? this.name.substring(0, 4).toUpperCase() : 'USER';

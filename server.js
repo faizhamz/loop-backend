@@ -26,9 +26,13 @@ const Order = require('./models/Order');
 const User = require('./models/User');
 const PaymentMethod = require('./models/PaymentMethod');
 const Banner = require('./models/Banner');
+const Review = require('./models/Review');
+const Contact = require('./models/Contact');
 
 // Import Routes
 const bannerRoutes = require('./routes/bannerRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const contactRoutes = require('./routes/contactRoutes');
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -38,6 +42,23 @@ mongoose.connect(process.env.MONGODB_URI, {
 .then(() => console.log('✅ MongoDB connected'))
 .catch(err => console.log('❌ MongoDB error:', err));
 
+// ============ AUTH MIDDLEWARE ============
+const authMiddleware = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) {
+    req.userId = null;
+    return next();
+  }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    req.userId = null;
+    next();
+  }
+};
+
 // ============ TEST ROUTE ============
 app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
@@ -45,6 +66,12 @@ app.get('/', (req, res) => {
 
 // ============ BANNER ROUTES ============
 app.use('/api/banners', bannerRoutes);
+
+// ============ REVIEW ROUTES ============
+app.use('/api/reviews', authMiddleware, reviewRoutes);
+
+// ============ CONTACT ROUTES ============
+app.use('/api/contact', contactRoutes);
 
 // ============ PRODUCT ROUTES ============
 
@@ -355,54 +382,8 @@ app.post('/api/coupons/bulk-generate', async (req, res) => {
 });
 
 // ============ ORDER ROUTES ============
-app.get('/api/orders', async (req, res) => {
-  try {
-    const orders = await Order.find().sort({ createdAt: -1 });
-    res.json(orders);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/orders/:id', async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json(order);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/orders', async (req, res) => {
-  try {
-    const orderCount = await Order.countDocuments();
-    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
-    const order = new Order({ ...req.body, orderId });
-    await order.save();
-    res.status(201).json(order);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.put('/api/orders/:id', async (req, res) => {
-  try {
-    const order = await Order.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
-    res.json(order);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.delete('/api/orders/:id', async (req, res) => {
-  try {
-    await Order.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Order deleted' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+const orderRoutes = require('./routes/orderRoutes');
+app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ============ USER ROUTES ============
 app.get('/api/users', async (req, res) => {
@@ -625,6 +606,8 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ============ CONTACT ROUTES (already registered above) ============
 
 const PORT = process.env.PORT || 5002;
 app.listen(PORT, () => {
