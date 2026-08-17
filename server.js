@@ -521,6 +521,67 @@ app.post('/api/auth/login', async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+// ✅ PASTE PHONE-LOGIN ROUTE RIGHT HERE (after login, before forgot-password)
+app.post('/api/auth/phone-login', async (req, res) => {
+  try {
+    const { phone, uid } = req.body;
+    
+    // Check if user exists with this phone
+    let user = await User.findOne({ phone });
+    
+    if (!user) {
+      // Create new user if not exists
+      const randomPassword = Math.random().toString(36).slice(-8);
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+      
+      user = new User({
+        name: `User_${phone.slice(-4)}`,
+        email: `${phone}@phone.loop.in`,
+        phone: phone,
+        password: hashedPassword,
+        emailVerified: true,
+        isActive: true
+      });
+      await user.save();
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        role: user.role,
+        walletBalance: user.wallet?.balance || 0
+      }
+    });
+  } catch (err) {
+    console.error('Phone login error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: 'Email not found' });
+    }
+    res.json({ message: 'Password reset link sent to your email' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
 
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
