@@ -62,7 +62,22 @@ const authMiddleware = (req, res, next) => {
     next();
   }
 };
-
+// ============ ADMIN MIDDLEWARE ============
+const adminMiddleware = async (req, res, next) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    req.adminUser = user;
+    next();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 // ============ TEST ROUTE ============
 app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
@@ -473,58 +488,116 @@ app.post('/api/users/:id/wallet', async (req, res) => {
 });
 
 // ============ AUTH ROUTES ============
+
+// ✅ Signup
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { name, email, phone, password } = req.body;
+    
+    // Check if email already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ error: 'Email already registered' });
     }
+    
+    // Check if phone already exists
+    if (phone) {
+      const existingPhone = await User.findOne({ phone });
+      if (existingPhone) {
+        return res.status(400).json({ error: 'Phone number already registered' });
+      }
+    }
+    
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email, phone, password: hashedPassword, emailVerified: true, isActive: true });
+    const user = new User({ 
+      name, 
+      email, 
+      phone: phone || '', 
+      password: hashedPassword, 
+      emailVerified: true, 
+      isActive: true 
+    });
     await user.save();
-    const token = jwt.sign({ userId: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '30d' }
+    );
+    
     res.status(201).json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, refId: user.refId }
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role 
+      }
     });
   } catch (err) {
+    console.error('Signup error:', err);
     res.status(400).json({ error: err.message });
   }
 });
 
+// ✅ Login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    
     user.lastLogin = new Date();
     await user.save();
-    const token = jwt.sign({ userId: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '30d' }
+    );
+    
     res.json({
       token,
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
+        phone: user.phone,
         refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role,
         walletBalance: user.wallet?.balance || 0
       }
     });
   } catch (err) {
+    console.error('Login error:', err);
     res.status(400).json({ error: err.message });
   }
 });
-// ✅ PASTE PHONE-LOGIN ROUTE RIGHT HERE (after login, before forgot-password)
+
+// ✅ Phone Login (OTP)
 app.post('/api/auth/phone-login', async (req, res) => {
   try {
     const { phone, uid } = req.body;
+    
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
     
     // Check if user exists with this phone
     let user = await User.findOne({ phone });
@@ -536,14 +609,20 @@ app.post('/api/auth/phone-login', async (req, res) => {
       
       user = new User({
         name: `User_${phone.slice(-4)}`,
-        email: `${phone}@phone.loop.in`,
+        email: `${phone.replace(/[^0-9]/g, '')}@phone.loop.in`,
         phone: phone,
         password: hashedPassword,
+        phoneVerified: true,
         emailVerified: true,
         isActive: true
       });
       await user.save();
     }
+    
+    // Update phone verification
+    user.phoneVerified = true;
+    user.lastLogin = new Date();
+    await user.save();
     
     // Generate JWT token
     const token = jwt.sign(
@@ -560,6 +639,7 @@ app.post('/api/auth/phone-login', async (req, res) => {
         email: user.email,
         phone: user.phone,
         refId: user.refId,
+        referralCode: user.referralCode,
         role: user.role,
         walletBalance: user.wallet?.balance || 0
       }
@@ -570,6 +650,7 @@ app.post('/api/auth/phone-login', async (req, res) => {
   }
 });
 
+// ✅ Forgot Password
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -577,43 +658,378 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'Email not found' });
     }
-    res.json({ message: 'Password reset link sent to your email' });
+    
+    // In production, send email with reset link
+    // For now, just return success
+    res.json({ 
+      message: 'Password reset link sent to your email',
+      success: true 
+    });
   } catch (err) {
+    console.error('Forgot password error:', err);
     res.status(400).json({ error: err.message });
   }
 });
 
-app.post('/api/auth/forgot-password', async (req, res) => {
+// ✅ Get Current User (Me)
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ error: 'Email not found' });
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
     }
-    const resetToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    res.json({ message: 'Password reset link sent to your email' });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.get('/api/auth/me', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
+    
+    const user = await User.findById(req.userId).select('-password');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+    
     res.json(user);
   } catch (err) {
+    console.error('Get me error:', err);
     res.status(401).json({ error: 'Invalid token' });
   }
 });
 
+// ============ REFERRAL ROUTES ============
+
+// ✅ Get referral settings (public)
+app.get('/api/referral/settings', async (req, res) => {
+  try {
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    res.json({
+      isEnabled: settings.isEnabled,
+      rewardAmount: settings.rewardAmount,
+      minimumOrderValue: settings.minimumOrderValue,
+      welcomeBonus: settings.welcomeBonus,
+      rewardDescription: settings.rewardDescription,
+      maxReferralsPerUser: settings.maxReferralsPerUser
+    });
+  } catch (err) {
+    console.error('Get referral settings error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Update referral settings (admin only)
+app.put('/api/referral/settings', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    const { 
+      isEnabled, 
+      rewardAmount, 
+      minimumOrderValue, 
+      rewardDescription, 
+      welcomeBonus, 
+      maxReferralsPerUser 
+    } = req.body;
+    
+    if (isEnabled !== undefined) settings.isEnabled = isEnabled;
+    if (rewardAmount !== undefined) settings.rewardAmount = rewardAmount;
+    if (minimumOrderValue !== undefined) settings.minimumOrderValue = minimumOrderValue;
+    if (rewardDescription !== undefined) settings.rewardDescription = rewardDescription;
+    if (welcomeBonus !== undefined) settings.welcomeBonus = welcomeBonus;
+    if (maxReferralsPerUser !== undefined) settings.maxReferralsPerUser = maxReferralsPerUser;
+    
+    settings.updatedAt = new Date();
+    settings.updatedBy = req.userId;
+    await settings.save();
+    
+    res.json({ 
+      message: '✅ Referral settings updated successfully', 
+      settings 
+    });
+  } catch (err) {
+    console.error('Update referral settings error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ✅ Get user's referral info (authenticated)
+app.get('/api/referral/my-info', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId)
+      .populate('referrals.userId', 'name email phone')
+      .populate('referrals.orderId', 'orderId total status');
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    
+    // Calculate earnings
+    const totalEarned = user.referrals
+      .filter(r => r.status === 'paid')
+      .reduce((sum, r) => sum + r.rewardAmount, 0);
+    
+    const pendingEarnings = user.referrals
+      .filter(r => r.status === 'pending')
+      .reduce((sum, r) => sum + r.rewardAmount, 0);
+    
+    const frontendUrl = process.env.FRONTEND_URL || 'https://loopstore.in';
+    
+    res.json({
+      referralCode: user.referralCode,
+      totalReferrals: user.referrals.length,
+      totalEarned,
+      pendingEarnings,
+      walletBalance: user.wallet?.balance || 0,
+      referralLink: `${frontendUrl}?ref=${user.referralCode}`,
+      referrals: user.referrals,
+      settings: {
+        rewardAmount: settings.rewardAmount,
+        minimumOrderValue: settings.minimumOrderValue,
+        welcomeBonus: settings.welcomeBonus,
+        isEnabled: settings.isEnabled
+      }
+    });
+  } catch (err) {
+    console.error('Get referral info error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Track referral click (public)
+app.post('/api/referral/track-click', async (req, res) => {
+  try {
+    const { referralCode } = req.body;
+    // Store in session or cookie for later
+    // Simple implementation: store in a temporary collection or just log
+    console.log(`📊 Referral click tracked: ${referralCode}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Track referral click error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Apply referral code during signup
+app.post('/api/referral/apply', authMiddleware, async (req, res) => {
+  try {
+    const { referralCode } = req.body;
+    const userId = req.userId;
+    
+    if (!referralCode) {
+      return res.status(400).json({ error: 'Referral code is required' });
+    }
+    
+    // Find referrer
+    const referrer = await User.findOne({ referralCode: referralCode.toUpperCase() });
+    if (!referrer) {
+      return res.status(404).json({ error: 'Invalid referral code' });
+    }
+    
+    // Check if user is trying to refer themselves
+    if (referrer._id.toString() === userId) {
+      return res.status(400).json({ error: 'You cannot refer yourself' });
+    }
+    
+    // Check if user already used a referral
+    const user = await User.findById(userId);
+    if (user.referredBy) {
+      return res.status(400).json({ error: 'You have already been referred' });
+    }
+    
+    // Apply referral
+    user.referredBy = referrer._id;
+    await user.save();
+    
+    res.json({ 
+      success: true, 
+      message: `✅ Referral code ${referralCode} applied! You'll get a bonus on your first order.`,
+      referrerName: referrer.name
+    });
+  } catch (err) {
+    console.error('Apply referral error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Process referral reward after first order
+app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const userId = req.userId;
+    
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    
+    // Check if referral program is enabled
+    if (!settings.isEnabled) {
+      return res.status(400).json({ error: 'Referral program is currently disabled' });
+    }
+    
+    // Get user and order
+    const user = await User.findById(userId);
+    const order = await Order.findById(orderId);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    // Check minimum order value
+    if (order.total < settings.minimumOrderValue) {
+      return res.status(400).json({ 
+        error: `Minimum order value of ₹${settings.minimumOrderValue} required for referral reward` 
+      });
+    }
+    
+    // Check if user already claimed referral bonus
+    if (user.hasClaimedReferral) {
+      return res.status(400).json({ error: 'You have already claimed your referral bonus' });
+    }
+    
+    // Check if user was referred
+    if (!user.referredBy) {
+      return res.status(400).json({ error: 'You were not referred by anyone' });
+    }
+    
+    // Find referrer
+    const referrer = await User.findById(user.referredBy);
+    if (!referrer) {
+      return res.status(404).json({ error: 'Referrer not found' });
+    }
+    
+    // Check if referrer already got reward for this user
+    const alreadyRewarded = referrer.referrals.some(r => 
+      r.userId.toString() === userId && r.status === 'paid'
+    );
+    
+    if (alreadyRewarded) {
+      return res.status(400).json({ error: 'Referral reward already processed' });
+    }
+    
+    // Give reward to referrer
+    const rewardAmount = settings.rewardAmount;
+    
+    referrer.wallet.balance += rewardAmount;
+    referrer.wallet.transactions.push({
+      amount: rewardAmount,
+      type: 'credit',
+      description: `Referral reward for ${user.name} (${user.phone}) - Order #${order.orderId}`
+    });
+    
+    // Add to referrals list
+    referrer.referrals.push({
+      userId: user._id,
+      orderId: order._id,
+      rewardAmount: rewardAmount,
+      status: 'paid',
+      rewardedAt: new Date()
+    });
+    
+    await referrer.save();
+    
+    // Mark user as having claimed referral
+    user.hasClaimedReferral = true;
+    await user.save();
+    
+    // Give welcome bonus to new user (optional)
+    if (settings.welcomeBonus > 0) {
+      user.wallet.balance += settings.welcomeBonus;
+      user.wallet.transactions.push({
+        amount: settings.welcomeBonus,
+        type: 'credit',
+        description: '🎉 Welcome bonus!'
+      });
+      await user.save();
+    }
+    
+    res.json({
+      success: true,
+      message: `🎉 You earned ₹${rewardAmount} referral reward!`,
+      referrer: {
+        name: referrer.name,
+        reward: rewardAmount
+      },
+      newBalance: referrer.wallet.balance
+    });
+  } catch (err) {
+    console.error('Process referral reward error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Get referral leaderboard (public)
+app.get('/api/referral/leaderboard', async (req, res) => {
+  try {
+    const topReferrers = await User.find({
+      'referrals.status': 'paid'
+    })
+    .select('name referralCode referrals wallet.balance')
+    .sort({ 'referrals': -1 })
+    .limit(10);
+    
+    const leaderboard = topReferrers.map(user => ({
+      name: user.name,
+      referralCode: user.referralCode,
+      totalReferrals: user.referrals.filter(r => r.status === 'paid').length,
+      totalEarned: user.referrals
+        .filter(r => r.status === 'paid')
+        .reduce((sum, r) => sum + r.rewardAmount, 0)
+    }));
+    
+    res.json(leaderboard);
+  } catch (err) {
+    console.error('Get leaderboard error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Admin: Get all referrals analytics
+app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    
+    const totalReferrals = await User.aggregate([
+      { $unwind: '$referrals' },
+      { $group: { _id: null, total: { $sum: 1 } } }
+    ]);
+    
+    const totalPaid = await User.aggregate([
+      { $unwind: '$referrals' },
+      { $match: { 'referrals.status': 'paid' } },
+      { $group: { _id: null, total: { $sum: 1 } } }
+    ]);
+    
+    const totalEarned = await User.aggregate([
+      { $unwind: '$referrals' },
+      { $match: { 'referrals.status': 'paid' } },
+      { $group: { _id: null, total: { $sum: '$referrals.rewardAmount' } } }
+    ]);
+    
+    const topReferrers = await User.find({
+      'referrals.status': 'paid'
+    })
+    .select('name referralCode referrals')
+    .sort({ 'referrals': -1 })
+    .limit(5);
+    
+    res.json({
+      settings,
+      stats: {
+        totalReferrals: totalReferrals[0]?.total || 0,
+        totalPaid: totalPaid[0]?.total || 0,
+        totalEarned: totalEarned[0]?.total || 0,
+        pendingReferrals: (totalReferrals[0]?.total || 0) - (totalPaid[0]?.total || 0)
+      },
+      topReferrers: topReferrers.map(u => ({
+        name: u.name,
+        referralCode: u.referralCode,
+        count: u.referrals.filter(r => r.status === 'paid').length
+      }))
+    });
+  } catch (err) {
+    console.error('Get referral analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ END AUTH & REFERRAL ROUTES ============
 // ============ PAYMENT METHOD ROUTES ============
 
 // Get all payment methods
