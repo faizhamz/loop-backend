@@ -29,6 +29,7 @@ const Banner = require('./models/Banner');
 const Review = require('./models/Review');
 const Contact = require('./models/Contact');
 const Notification = require('./models/Notification');
+const categoryRoutes = require('./routes/categoryRoutes');
 
 // Import Routes
 const bannerRoutes = require('./routes/bannerRoutes');
@@ -97,6 +98,9 @@ app.use('/api/notifications', notificationRoutes);
 
 // ============ VARIANT ROUTES ============
 app.use('/api/variants', authMiddleware, variantRoutes);
+
+//Category Routes
+app.use('/api/categories', categoryRoutes);
 
 // ============ PRODUCT ROUTES ============
 

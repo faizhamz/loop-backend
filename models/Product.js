@@ -29,6 +29,7 @@ const productSchema = new mongoose.Schema({
   videos: [{ type: String }], // NEW: Video uploads
   description: { type: String, default: '' },
   category: { type: String, default: 'Uncategorized' },
+  categories: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Category' }],
   color: { type: String, default: 'Black' },
   size: { type: String, enum: ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'One Size'], default: 'M' },
   status: { 
