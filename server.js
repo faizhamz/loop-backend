@@ -103,6 +103,13 @@ app.use('/api/variants', authMiddleware, variantRoutes);
 const analyticsRoutes = require('./routes/analyticsRoutes');
 app.use('/api/analytics', analyticsRoutes);
 
+// ============ UPLOAD ROUTES ============
+const uploadRoutes = require('./routes/uploadRoutes');
+app.use('/api/upload', uploadRoutes);
+
+// ============ SERVE STATIC FILES ============
+app.use('/uploads', express.static('uploads'));
+
 //Category Routes
 app.use('/api/categories', categoryRoutes);
 
