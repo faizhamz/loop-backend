@@ -101,6 +101,7 @@ app.use('/api/variants', authMiddleware, variantRoutes);
 
 // ============ ANALYTICS ROUTES ============ 
 const analyticsRoutes = require('./routes/analyticsRoutes');
+app.use('/api/analytics', analyticsRoutes);
 
 //Category Routes
 app.use('/api/categories', categoryRoutes);

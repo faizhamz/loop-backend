@@ -3,8 +3,8 @@ const mongoose = require('mongoose');
 const bannerSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String, default: '' },
-  image: { type: String, required: true }, // Cloudinary URL
-  imageMobile: { type: String, default: '' }, // Optional mobile-specific image
+  image: { type: String, required: true },
+  imageMobile: { type: String, default: '' },
   
   // Navigation
   linkType: { 
@@ -12,7 +12,7 @@ const bannerSchema = new mongoose.Schema({
     enum: ['product', 'category', 'tag', 'custom', 'external'],
     default: 'product'
   },
-  linkValue: { type: String, required: true }, // e.g., productId or URL
+  linkValue: { type: String, required: true },
   
   // Banner Type for styling
   bannerType: {
@@ -22,18 +22,24 @@ const bannerSchema = new mongoose.Schema({
   },
   
   // Display Settings
-  priority: { type: Number, default: 0 }, // Higher = shows first
-  autoplaySpeed: { type: Number, default: 5000 }, // milliseconds (5 seconds default)
+  priority: { type: Number, default: 0 },
+  autoplaySpeed: { type: Number, default: 5000 },
   
   // Schedule
   startDate: { type: Date, default: Date.now },
-  endDate: { type: Date, default: null }, // null = never expires
+  endDate: { type: Date, default: null },
   
   // Status
   isActive: { type: Boolean, default: true },
   isDeleted: { type: Boolean, default: false },
+  isExpired: { type: Boolean, default: false },
+  expiredAt: { type: Date, default: null },
   
-  // Analytics
+  // ✅ ANALYTICS FIELDS - ADD THESE
+  totalClicks: { type: Number, default: 0 },
+  uniqueClickers: { type: Number, default: 0 },
+  
+  // Analytics (existing)
   clicks: { type: Number, default: 0 },
   impressions: { type: Number, default: 0 },
   
@@ -65,6 +71,20 @@ bannerSchema.virtual('timeRemaining').get(function() {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+});
+
+// ✅ Auto-expire banner when endDate passes
+bannerSchema.pre('save', function(next) {
+  this.updatedAt = new Date();
+  
+  // Check if banner should be expired
+  if (this.endDate && new Date() > new Date(this.endDate)) {
+    this.isExpired = true;
+    this.isActive = false;
+    this.expiredAt = new Date();
+  }
+  
+  next();
 });
 
 module.exports = mongoose.model('Banner', bannerSchema);

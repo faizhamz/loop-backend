@@ -9,8 +9,8 @@ const variantSchema = new mongoose.Schema({
   color: { type: String, default: 'Black' },
   stock: { type: Number, required: true, default: 0 },
   sku: { type: String, unique: true, sparse: true },
-  price: { type: Number }, // Override base price if needed
-  salePrice: { type: Number }, // Override base sale price if needed
+  price: { type: Number },
+  salePrice: { type: Number },
   isActive: { type: Boolean, default: true }
 });
 
@@ -23,13 +23,16 @@ const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
   salePrice: { type: Number, default: null },
-  stock: { type: Number, required: true, default: 0 }, // Total stock (sum of variants)
+  stock: { type: Number, required: true, default: 0 },
   image: { type: String, default: '' },
   images: [{ type: String }],
-  videos: [{ type: String }], // NEW: Video uploads
+  videos: [{ type: String }],
   description: { type: String, default: '' },
   category: { type: String, default: 'Uncategorized' },
-  categories: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Category' }],
+  categories: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category'
+  }],
   color: { type: String, default: 'Black' },
   size: { type: String, enum: ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'One Size'], default: 'M' },
   status: { 
@@ -39,17 +42,21 @@ const productSchema = new mongoose.Schema({
   },
   isActive: { type: Boolean, default: true },
   
-  // NEW: Variants (size/color/stock per variant)
+  // Variants
   variants: [variantSchema],
   hasVariants: { type: Boolean, default: false },
   
-  // NEW: Total items sold (real-time tracking)
+  // Sales tracking
   totalSold: { type: Number, default: 0 },
+  
+  // ✅ ANALYTICS FIELDS - ADD THESE
+  totalViews: { type: Number, default: 0 },
+  uniqueViewers: { type: Number, default: 0 },
   
   // Review stats
   avgRating: { type: Number, default: 0 },
   reviewCount: { type: Number, default: 0 },
-  totalReviews: { type: Number, default: 0 }, // Total including unverified
+  totalReviews: { type: Number, default: 0 },
   
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
