@@ -3,16 +3,15 @@ const mongoose = require('mongoose');
 const categorySchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true,
+    required: [true, 'Category name is required'],
     trim: true,
     unique: true
   },
   slug: {
     type: String,
-    required: true,
-    unique: true,
+    trim: true,
     lowercase: true,
-    trim: true
+    unique: true
   },
   image: {
     type: String,
@@ -33,23 +32,26 @@ const categorySchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
-  },
-  productCount: {
-    type: Number,
-    default: 0
   }
 }, {
   timestamps: true
 });
 
-// Auto-generate slug from name
+// ✅ Generate slug from name
 categorySchema.pre('save', function(next) {
-  if (this.isModified('name')) {
+  if (this.isModified('name') || !this.slug) {
     this.slug = this.name
       .toLowerCase()
-      .replace(/[^a-zA-Z0-9]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, '')   // Remove special chars except spaces and hyphens
+      .replace(/\s+/g, '-')            // Replace spaces with -
+      .replace(/-+/g, '-')             // Replace multiple - with single -
+      .replace(/^-|-$/g, '');          // Remove leading/trailing -
+    
+    // If slug is empty after cleaning, use a fallback
+    if (!this.slug) {
+      this.slug = `category-${Date.now()}`;
+    }
   }
   next();
 });
