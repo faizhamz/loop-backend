@@ -99,6 +99,9 @@ app.use('/api/notifications', notificationRoutes);
 // ============ VARIANT ROUTES ============
 app.use('/api/variants', authMiddleware, variantRoutes);
 
+// ============ ANALYTICS ROUTES ============ 
+const analyticsRoutes = require('./routes/analyticsRoutes');
+
 //Category Routes
 app.use('/api/categories', categoryRoutes);
 
