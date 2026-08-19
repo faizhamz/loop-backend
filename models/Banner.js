@@ -35,11 +35,9 @@ const bannerSchema = new mongoose.Schema({
   isExpired: { type: Boolean, default: false },
   expiredAt: { type: Date, default: null },
   
-  // ✅ ANALYTICS FIELDS - ADD THESE
+  // Analytics
   totalClicks: { type: Number, default: 0 },
   uniqueClickers: { type: Number, default: 0 },
-  
-  // Analytics (existing)
   clicks: { type: Number, default: 0 },
   impressions: { type: Number, default: 0 },
   
@@ -73,11 +71,10 @@ bannerSchema.virtual('timeRemaining').get(function() {
   return `${minutes}m`;
 });
 
-// ✅ Auto-expire banner when endDate passes
+// Auto-expire banner when endDate passes
 bannerSchema.pre('save', function(next) {
   this.updatedAt = new Date();
   
-  // Check if banner should be expired
   if (this.endDate && new Date() > new Date(this.endDate)) {
     this.isExpired = true;
     this.isActive = false;

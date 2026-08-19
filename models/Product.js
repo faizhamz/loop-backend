@@ -24,12 +24,12 @@ const productSchema = new mongoose.Schema({
   salePrice: { type: Number, default: null },
   stock: { type: Number, required: true, default: 0 },
   
-  // ✅ Images (updated for multiple sizes)
+  // Images with multiple sizes
   image: { type: String, default: '' },
   images: [{ type: String }],
-  thumbnail: { type: String, default: '' },      // NEW: 150x150
-  medium: { type: String, default: '' },          // NEW: 500x500
-  large: { type: String, default: '' },           // NEW: 1200x1200
+  thumbnail: { type: String, default: '' },
+  medium: { type: String, default: '' },
+  large: { type: String, default: '' },
   videos: [{ type: String }],
   
   description: { type: String, default: '' },
@@ -41,8 +41,6 @@ const productSchema = new mongoose.Schema({
   color: { type: String, default: 'Black' },
   size: { type: String, enum: ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'One Size'], default: 'M' },
   
-  // ❌ REMOVE: fabric and fit (no longer needed)
-  
   status: { 
     type: String, 
     enum: ['active', 'inactive', 'discontinued'], 
@@ -50,7 +48,7 @@ const productSchema = new mongoose.Schema({
   },
   isActive: { type: Boolean, default: true },
   
-  // ✅ NEW: Dynamic variants
+  // Dynamic variants
   variants: [variantSchema],
   hasVariants: { type: Boolean, default: false },
   

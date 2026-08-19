@@ -1,3 +1,5 @@
+const mongoose = require('mongoose');
+
 const categorySchema = new mongoose.Schema({
   name: {
     type: String,
@@ -18,7 +20,7 @@ const categorySchema = new mongoose.Schema({
   displayOrder: { type: Number, default: 0 },
   isActive: { type: Boolean, default: true },
   
-  // ✅ NEW: Product type for this category
+  // Product type for this category
   productType: {
     type: String,
     enum: ['clothing', 'toys', 'electronics', 'accessories', 'home', 'stationery', 'other'],
@@ -28,21 +30,14 @@ const categorySchema = new mongoose.Schema({
   timestamps: true
 });
 
-// ✅ Generate slug from name
+// Auto-generate slug from name
 categorySchema.pre('save', function(next) {
-  if (this.isModified('name') || !this.slug) {
+  if (this.isModified('name')) {
     this.slug = this.name
       .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9\s-]/g, '')   // Remove special chars except spaces and hyphens
-      .replace(/\s+/g, '-')            // Replace spaces with -
-      .replace(/-+/g, '-')             // Replace multiple - with single -
-      .replace(/^-|-$/g, '');          // Remove leading/trailing -
-    
-    // If slug is empty after cleaning, use a fallback
-    if (!this.slug) {
-      this.slug = `category-${Date.now()}`;
-    }
+      .replace(/[^a-zA-Z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
   }
   next();
 });
