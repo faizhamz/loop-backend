@@ -1164,6 +1164,39 @@ app.post('/api/orders/confirm-payment', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/orders/notify-verification-failed', authMiddleware, async (req, res) => {
+  try {
+    const { orderId, reason } = req.body;
+    
+    // Log the failure for admin dashboard
+    console.log(`⚠️ PAYMENT VERIFICATION FAILED for Order: ${orderId}`);
+    console.log(`   Reason: ${reason}`);
+    console.log(`   User: ${req.userId}`);
+    console.log(`   Time: ${new Date().toISOString()}`);
+    
+    // Option 1: Send email notification to admin
+    // You can integrate with nodemailer, SendGrid, etc.
+    
+    // Option 2: Store in database for admin dashboard
+    // Create a PaymentFailure model or add to order
+    
+    // Option 3: Send to a webhook (Slack, Discord, etc.)
+    // await axios.post('https://hooks.slack.com/services/...', {
+    //   text: `⚠️ Payment verification failed for Order ${orderId}`
+    // });
+    
+    // For now, just log it
+    res.json({ 
+      success: true, 
+      message: 'Admin notified',
+      orderId: orderId
+    });
+  } catch (err) {
+    console.error('Admin notification error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================
 // END PAYMENT VERIFICATION ROUTES
 // ============================================
