@@ -1045,6 +1045,7 @@ app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async 
 });
 
 // ============ END AUTH & REFERRAL ROUTES ============
+
 // ============ PAYMENT METHOD ROUTES ============
 
 // Get all payment methods
@@ -1108,6 +1109,64 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
 });
 
 // ============ CONTACT ROUTES (already registered above) ============
+
+// ============================================
+// ✅ PAYMENT VERIFICATION ROUTES (ADDED)
+// ============================================
+
+// Get order status for verification
+app.get('/api/orders/verify/:orderId', async (req, res) => {
+  try {
+    const order = await Order.findOne({ orderId: req.params.orderId });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    res.json({
+      orderId: order.orderId,
+      paymentStatus: order.paymentStatus,
+      status: order.status,
+      order: order
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual payment confirmation (fallback)
+app.post('/api/orders/confirm-payment', authMiddleware, async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const userId = req.userId;
+    
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    // Verify order belongs to user
+    if (order.userId && order.userId.toString() !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    
+    order.paymentStatus = 'paid';
+    order.status = 'processing';
+    order.timeline.push({
+      status: 'processing',
+      description: 'Payment confirmed (manual)',
+      timestamp: new Date()
+    });
+    await order.save();
+    
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// END PAYMENT VERIFICATION ROUTES
+// ============================================
 
 const PORT = process.env.PORT || 5002;
 app.listen(PORT, () => {
