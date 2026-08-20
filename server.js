@@ -63,6 +63,7 @@ const authMiddleware = (req, res, next) => {
     next();
   }
 };
+
 // ============ ADMIN MIDDLEWARE ============
 const adminMiddleware = async (req, res, next) => {
   try {
@@ -79,6 +80,35 @@ const adminMiddleware = async (req, res, next) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// ============ HELPER FUNCTION: Validate Pincode ============
+const validatePincode = async (pincode) => {
+  try {
+    // Check if pincode is exactly 6 digits
+    if (!/^\d{6}$/.test(pincode)) {
+      return { valid: false, message: 'Pincode must be exactly 6 digits' };
+    }
+    
+    const response = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
+    const data = await response.json();
+    
+    if (data[0]?.Status === 'Success') {
+      const postOffice = data[0].PostOffice[0];
+      return { 
+        valid: true, 
+        city: postOffice.District || '',
+        state: postOffice.State || '',
+        message: 'Pincode verified successfully'
+      };
+    } else {
+      return { valid: false, message: 'Invalid pincode. Please enter a valid Indian pincode.' };
+    }
+  } catch (error) {
+    console.error('Pincode validation error:', error);
+    return { valid: false, message: 'Could not verify pincode. Please try again.' };
+  }
+};
+
 // ============ TEST ROUTE ============
 app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
@@ -1111,7 +1141,7 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
 // ============ CONTACT ROUTES (already registered above) ============
 
 // ============================================
-// ✅ PAYMENT VERIFICATION ROUTES (ADDED)
+// ✅ PAYMENT VERIFICATION ROUTES
 // ============================================
 
 // Get order status for verification
@@ -1199,6 +1229,92 @@ app.post('/api/orders/notify-verification-failed', authMiddleware, async (req, r
 
 // ============================================
 // END PAYMENT VERIFICATION ROUTES
+// ============================================
+
+// ============================================
+// ✅ ORDER CREATION ROUTE WITH PINCODE VALIDATION
+// ============================================
+
+// ✅ UPDATED: Create new order with pincode validation
+app.post('/api/orders', authMiddleware, async (req, res) => {
+  try {
+    const { customer, items, subtotal, shipping, discount, couponCode, total } = req.body;
+    
+    // ✅ Validate pincode if present
+    if (customer?.address?.pincode) {
+      const pincode = customer.address.pincode;
+      const validation = await validatePincode(pincode);
+      
+      if (!validation.valid) {
+        return res.status(400).json({ 
+          error: validation.message,
+          field: 'pincode'
+        });
+      }
+      
+      // ✅ Auto-correct city and state if they don't match
+      if (validation.city && validation.state) {
+        // If user entered wrong city/state, auto-correct them
+        customer.address.city = validation.city;
+        customer.address.state = validation.state;
+        console.log(`✅ Auto-corrected address: ${customer.address.city}, ${customer.address.state}`);
+      }
+    }
+    
+    // Check if user is logged in
+    const userId = req.userId || null;
+    
+    // Generate order ID
+    const orderCount = await Order.countDocuments();
+    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
+    
+    // Create order data
+    const orderData = {
+      orderId,
+      customer,
+      userId,
+      items,
+      subtotal,
+      shipping,
+      discount,
+      couponCode: couponCode || '',
+      total,
+      paymentStatus: 'pending',
+      status: 'pending',
+      timeline: [{
+        status: 'pending',
+        description: 'Order placed successfully',
+        timestamp: new Date()
+      }]
+    };
+    
+    const order = new Order(orderData);
+    await order.save();
+    
+    // Update user's order list if logged in
+    if (userId) {
+      await User.findByIdAndUpdate(userId, {
+        $push: { orderIds: order._id },
+        $inc: { totalSpent: total }
+      });
+    }
+    
+    // Update product totalSold
+    for (const item of items) {
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { totalSold: item.quantity }
+      });
+    }
+    
+    res.status(201).json(order);
+  } catch (err) {
+    console.error('Order creation error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================
+// END ORDER CREATION ROUTE
 // ============================================
 
 const PORT = process.env.PORT || 5002;
