@@ -9,10 +9,10 @@ const categorySchema = new mongoose.Schema({
   },
   slug: {
     type: String,
-    required: true,
     unique: true,
     lowercase: true,
     trim: true
+    // ✅ required: true removed
   },
   image: { type: String, default: '' },
   description: { type: String, default: '' },
@@ -32,14 +32,20 @@ const categorySchema = new mongoose.Schema({
 
 // Auto-generate slug from name
 categorySchema.pre('save', function(next) {
-  if (this.isModified('name')) {
+  if (this.isModified('name') && this.name) {
     this.slug = this.name
       .toLowerCase()
+      .trim()
       .replace(/[^a-zA-Z0-9]/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '');
   }
   next();
 });
+
+// Add index for better performance
+categorySchema.index({ slug: 1 }, { unique: true, sparse: true });
+categorySchema.index({ name: 1 }, { unique: true });
+categorySchema.index({ isActive: 1 });
 
 module.exports = mongoose.model('Category', categorySchema);
