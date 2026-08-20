@@ -2,13 +2,12 @@ const mongoose = require('mongoose');
 
 const orderItemSchema = new mongoose.Schema({
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
-  variantId: { type: mongoose.Schema.Types.ObjectId }, // NEW: Reference to variant
+  variantId: { type: mongoose.Schema.Types.ObjectId },
   name: { type: String, required: true },
   price: { type: Number, required: true },
   quantity: { type: Number, required: true, min: 1 },
   size: { type: String, default: 'M' },
   color: { type: String, default: 'Black' },
-  // NEW: Track if reviewed
   isReviewed: { type: Boolean, default: false }
 });
 
@@ -40,16 +39,26 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned'], 
     default: 'pending' 
   },
-  // NEW: Order timeline
+  
+  // ✅ NEW: Tracking Information
+  tracking: {
+    number: { type: String, default: '' },
+    courier: { type: String, enum: ['delhivery', 'bluedart', 'dtdc', 'xpressbees', 'other', ''], default: '' },
+    courierName: { type: String, default: '' },
+    url: { type: String, default: '' },
+    updatedAt: { type: Date, default: null }
+  },
+  
   timeline: [{
     status: String,
     description: String,
     timestamp: { type: Date, default: Date.now }
   }],
-  // NEW: Post-order rating
+  
   postOrderRating: { type: Number, min: 1, max: 5 },
   postOrderComment: { type: String, default: '' },
   postOrderRatedAt: { type: Date },
+  
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -62,7 +71,6 @@ orderSchema.pre('save', function(next) {
     const prefix = `LOOP-${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     this.orderId = `${prefix}-${String(Math.floor(100000 + Math.random() * 900000))}`;
   }
-  // Add initial timeline entry
   if (this.isNew) {
     this.timeline = [{
       status: 'pending',
@@ -73,9 +81,36 @@ orderSchema.pre('save', function(next) {
   next();
 });
 
+// ✅ NEW: Method to update status with timeline
+orderSchema.methods.updateStatus = function(newStatus, description = '') {
+  const validTransitions = {
+    'pending': ['processing', 'cancelled'],
+    'processing': ['shipped', 'cancelled'],
+    'shipped': ['delivered', 'cancelled'],
+    'delivered': ['returned'],
+    'cancelled': [],
+    'returned': []
+  };
+  
+  if (!validTransitions[this.status]?.includes(newStatus)) {
+    throw new Error(`Invalid status transition: ${this.status} → ${newStatus}`);
+  }
+  
+  this.status = newStatus;
+  this.timeline.push({
+    status: newStatus,
+    description: description || `Order ${newStatus}`,
+    timestamp: new Date()
+  });
+  
+  return this.save();
+};
+
 // Indexes
 orderSchema.index({ orderId: 1 }, { unique: true });
 orderSchema.index({ userId: 1 });
 orderSchema.index({ createdAt: -1 });
+orderSchema.index({ status: 1 });
+orderSchema.index({ paymentStatus: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

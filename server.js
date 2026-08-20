@@ -4,6 +4,8 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 
 dotenv.config();
 
@@ -84,7 +86,6 @@ const adminMiddleware = async (req, res, next) => {
 // ============ HELPER FUNCTION: Validate Pincode ============
 const validatePincode = async (pincode) => {
   try {
-    // Check if pincode is exactly 6 digits
     if (!/^\d{6}$/.test(pincode)) {
       return { valid: false, message: 'Pincode must be exactly 6 digits' };
     }
@@ -107,6 +108,196 @@ const validatePincode = async (pincode) => {
     console.error('Pincode validation error:', error);
     return { valid: false, message: 'Could not verify pincode. Please try again.' };
   }
+};
+
+// ============ NOTIFICATION SERVICE ============
+class NotificationService {
+  constructor() {
+    this.transporter = null;
+    // Only setup if email credentials exist
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      try {
+        const nodemailer = require('nodemailer');
+        this.transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+          }
+        });
+        console.log('✅ Email service initialized');
+      } catch (e) {
+        console.log('⚠️ Email service not configured');
+      }
+    }
+  }
+
+  async sendEmail(to, subject, html) {
+    if (!this.transporter) {
+      console.log('📧 Email would be sent:', { to, subject });
+      return null;
+    }
+    try {
+      const info = await this.transporter.sendMail({
+        from: `"LOOP Store" <${process.env.EMAIL_USER}>`,
+        to,
+        subject,
+        html
+      });
+      console.log('📧 Email sent:', info.messageId);
+      return info;
+    } catch (error) {
+      console.error('Email error:', error);
+      return null;
+    }
+  }
+
+  async notifyNewOrder(order) {
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@loopstore.in';
+    const subject = `🛍️ New Order #${order.orderId}`;
+    const html = `
+      <h2>New Order Received! 🎉</h2>
+      <p><strong>Order ID:</strong> ${order.orderId}</p>
+      <p><strong>Customer:</strong> ${order.customer?.name || 'Guest'}</p>
+      <p><strong>Total:</strong> ₹${order.total}</p>
+      <p><strong>Items:</strong> ${order.items?.length || 0} items</p>
+      <p><a href="${process.env.ADMIN_URL || 'https://loopstore.in/admin'}">View Order</a></p>
+    `;
+    return this.sendEmail(adminEmail, subject, html);
+  }
+
+  async notifyPaymentReceived(order) {
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@loopstore.in';
+    const subject = `✅ Payment Received for Order #${order.orderId}`;
+    const html = `
+      <h2>Payment Confirmed! 💰</h2>
+      <p><strong>Order ID:</strong> ${order.orderId}</p>
+      <p><strong>Amount:</strong> ₹${order.total}</p>
+      <p><strong>Customer:</strong> ${order.customer?.name || 'Guest'}</p>
+      <p><a href="${process.env.ADMIN_URL || 'https://loopstore.in/admin'}">View Order</a></p>
+    `;
+    return this.sendEmail(adminEmail, subject, html);
+  }
+
+  async notifyCustomerShipped(order) {
+    if (!order.customer?.email) return;
+    const subject = `🚚 Your Order #${order.orderId} has been Shipped!`;
+    const trackingInfo = order.tracking?.number ? `<p><strong>Tracking:</strong> ${order.tracking.number}</p>` : '';
+    const html = `
+      <h2>Your Order is on the Way! 🚚</h2>
+      <p><strong>Order ID:</strong> ${order.orderId}</p>
+      ${trackingInfo}
+      <p><a href="${process.env.FRONTEND_URL || 'https://loopstore.in'}/orders">Track Your Order</a></p>
+    `;
+    return this.sendEmail(order.customer.email, subject, html);
+  }
+
+  async notifyCustomerDelivered(order) {
+    if (!order.customer?.email) return;
+    const subject = `✅ Your Order #${order.orderId} has been Delivered!`;
+    const html = `
+      <h2>Order Delivered! 🎉</h2>
+      <p><strong>Order ID:</strong> ${order.orderId}</p>
+      <p>Thank you for shopping with LOOP! We hope you love your items.</p>
+      <p><a href="${process.env.FRONTEND_URL || 'https://loopstore.in'}/orders">View Your Order</a></p>
+    `;
+    return this.sendEmail(order.customer.email, subject, html);
+  }
+}
+
+const notificationService = new NotificationService();
+
+// ============ PDF INVOICE GENERATOR ============
+const generateInvoice = (order) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const PDFDocument = require('pdfkit');
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks = [];
+
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+      // Header - Logo
+      doc.fontSize(24)
+         .fillColor('#D4AF37')
+         .text('LOOP', { align: 'center' })
+         .fontSize(14)
+         .fillColor('#888')
+         .text('Make your move', { align: 'center' })
+         .moveDown();
+
+      // Invoice Title
+      doc.fontSize(20)
+         .fillColor('#000')
+         .text('INVOICE', { align: 'center' })
+         .moveDown();
+
+      // Order Details
+      doc.fontSize(12).fillColor('#333');
+      doc.text(`Order ID: ${order.orderId}`, { continued: true })
+         .text(`Date: ${new Date(order.createdAt).toLocaleDateString()}`, { align: 'right' });
+      doc.moveDown();
+
+      // Customer Details
+      doc.fontSize(14).fillColor('#D4AF37').text('Customer Details');
+      doc.fontSize(12).fillColor('#333');
+      doc.text(`Name: ${order.customer?.name || 'Guest'}`);
+      doc.text(`Email: ${order.customer?.email || 'N/A'}`);
+      doc.text(`Phone: ${order.customer?.phone || 'N/A'}`);
+      doc.moveDown();
+
+      // Shipping Address
+      doc.fontSize(14).fillColor('#D4AF37').text('Shipping Address');
+      doc.fontSize(12).fillColor('#333');
+      const addr = order.customer?.address;
+      if (addr) {
+        doc.text(`${addr.street || ''}`);
+        doc.text(`${addr.city || ''}, ${addr.state || ''} - ${addr.pincode || ''}`);
+        if (addr.landmark) doc.text(`Landmark: ${addr.landmark}`);
+      }
+      doc.moveDown();
+
+      // Items Table
+      doc.fontSize(14).fillColor('#D4AF37').text('Items Ordered');
+      doc.fontSize(12).fillColor('#333');
+
+      const tableTop = doc.y;
+      doc.text('Item', 50, tableTop, { width: 200 });
+      doc.text('Qty', 300, tableTop, { width: 50, align: 'center' });
+      doc.text('Price', 400, tableTop, { width: 80, align: 'right' });
+      doc.text('Total', 500, tableTop, { width: 80, align: 'right' });
+      doc.moveDown();
+
+      order.items.forEach((item) => {
+        const y = doc.y;
+        doc.text(item.name, 50, y, { width: 200 });
+        doc.text(String(item.quantity), 300, y, { width: 50, align: 'center' });
+        doc.text(`₹${item.price}`, 400, y, { width: 80, align: 'right' });
+        doc.text(`₹${item.price * item.quantity}`, 500, y, { width: 80, align: 'right' });
+        doc.moveDown();
+      });
+
+      doc.moveDown();
+      const totalY = doc.y;
+      doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
+      doc.text(`Shipping: ₹${order.shipping || 0}`, 400, doc.y + 20, { align: 'right' });
+      if (order.discount > 0) {
+        doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
+      }
+      doc.fontSize(16).fillColor('#D4AF37')
+         .text(`Total: ₹${order.total}`, 400, doc.y + 20, { align: 'right' });
+
+      doc.moveDown(2);
+      doc.fontSize(10).fillColor('#888')
+         .text('Thank you for shopping with LOOP!', { align: 'center' })
+         .text('For support: support@loopstore.in | +91 98765 43210', { align: 'center' });
+
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
 };
 
 // ============ TEST ROUTE ============
@@ -155,29 +346,22 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Get product by slug (productId, ID, or name)
+// Get product by slug
 app.get('/api/products/:slug', async (req, res) => {
   try {
     const slug = req.params.slug;
     let product = null;
 
-    // 1. Try by productId
     product = await Product.findOne({ productId: slug });
-
-    // 2. Try by MongoDB _id
     if (!product && mongoose.Types.ObjectId.isValid(slug)) {
       product = await Product.findById(slug);
     }
-
-    // 3. Try by name
     if (!product) {
       const nameSlug = slug.replace(/-/g, ' ');
       product = await Product.findOne({
         name: { $regex: new RegExp(`^${nameSlug}$`, 'i') }
       });
     }
-
-    // 4. Try partial name match
     if (!product) {
       product = await Product.findOne({
         name: { $regex: new RegExp(slug.replace(/-/g, ' '), 'i') }
@@ -245,7 +429,7 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-// ============ DELETE PRODUCT (Hard Delete) ============
+// ============ DELETE PRODUCT ============
 app.delete('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
@@ -258,7 +442,6 @@ app.delete('/api/products/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 // Toggle product status
 app.patch('/api/products/:id/status', async (req, res) => {
@@ -534,18 +717,16 @@ app.post('/api/users/:id/wallet', async (req, res) => {
 
 // ============ AUTH ROUTES ============
 
-// ✅ Signup
+// Signup
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { name, email, phone, password } = req.body;
     
-    // Check if email already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ error: 'Email already registered' });
     }
     
-    // Check if phone already exists
     if (phone) {
       const existingPhone = await User.findOne({ phone });
       if (existingPhone) {
@@ -588,7 +769,7 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// ✅ Login
+// Login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -635,7 +816,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ✅ Phone Login (OTP)
+// Phone Login (OTP)
 app.post('/api/auth/phone-login', async (req, res) => {
   try {
     const { phone, uid } = req.body;
@@ -644,11 +825,9 @@ app.post('/api/auth/phone-login', async (req, res) => {
       return res.status(400).json({ error: 'Phone number is required' });
     }
     
-    // Check if user exists with this phone
     let user = await User.findOne({ phone });
     
     if (!user) {
-      // Create new user if not exists
       const randomPassword = Math.random().toString(36).slice(-8);
       const hashedPassword = await bcrypt.hash(randomPassword, 10);
       
@@ -664,12 +843,10 @@ app.post('/api/auth/phone-login', async (req, res) => {
       await user.save();
     }
     
-    // Update phone verification
     user.phoneVerified = true;
     user.lastLogin = new Date();
     await user.save();
     
-    // Generate JWT token
     const token = jwt.sign(
       { userId: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -695,7 +872,7 @@ app.post('/api/auth/phone-login', async (req, res) => {
   }
 });
 
-// ✅ Forgot Password
+// Forgot Password
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -703,9 +880,6 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'Email not found' });
     }
-    
-    // In production, send email with reset link
-    // For now, just return success
     res.json({ 
       message: 'Password reset link sent to your email',
       success: true 
@@ -716,18 +890,16 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 });
 
-// ✅ Get Current User (Me)
+// Get Current User (Me)
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     if (!req.userId) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
-    
     const user = await User.findById(req.userId).select('-password');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
     res.json(user);
   } catch (err) {
     console.error('Get me error:', err);
@@ -737,7 +909,6 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 
 // ============ REFERRAL ROUTES ============
 
-// ✅ Get referral settings (public)
 app.get('/api/referral/settings', async (req, res) => {
   try {
     const ReferralSettings = require('./models/ReferralSettings');
@@ -756,19 +927,11 @@ app.get('/api/referral/settings', async (req, res) => {
   }
 });
 
-// ✅ Update referral settings (admin only)
 app.put('/api/referral/settings', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
-    const { 
-      isEnabled, 
-      rewardAmount, 
-      minimumOrderValue, 
-      rewardDescription, 
-      welcomeBonus, 
-      maxReferralsPerUser 
-    } = req.body;
+    const { isEnabled, rewardAmount, minimumOrderValue, rewardDescription, welcomeBonus, maxReferralsPerUser } = req.body;
     
     if (isEnabled !== undefined) settings.isEnabled = isEnabled;
     if (rewardAmount !== undefined) settings.rewardAmount = rewardAmount;
@@ -781,17 +944,13 @@ app.put('/api/referral/settings', authMiddleware, adminMiddleware, async (req, r
     settings.updatedBy = req.userId;
     await settings.save();
     
-    res.json({ 
-      message: '✅ Referral settings updated successfully', 
-      settings 
-    });
+    res.json({ message: '✅ Referral settings updated successfully', settings });
   } catch (err) {
     console.error('Update referral settings error:', err);
     res.status(400).json({ error: err.message });
   }
 });
 
-// ✅ Get user's referral info (authenticated)
 app.get('/api/referral/my-info', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.userId)
@@ -805,7 +964,6 @@ app.get('/api/referral/my-info', authMiddleware, async (req, res) => {
     const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
     
-    // Calculate earnings
     const totalEarned = user.referrals
       .filter(r => r.status === 'paid')
       .reduce((sum, r) => sum + r.rewardAmount, 0);
@@ -837,12 +995,9 @@ app.get('/api/referral/my-info', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ Track referral click (public)
 app.post('/api/referral/track-click', async (req, res) => {
   try {
     const { referralCode } = req.body;
-    // Store in session or cookie for later
-    // Simple implementation: store in a temporary collection or just log
     console.log(`📊 Referral click tracked: ${referralCode}`);
     res.json({ success: true });
   } catch (err) {
@@ -851,7 +1006,6 @@ app.post('/api/referral/track-click', async (req, res) => {
   }
 });
 
-// ✅ Apply referral code during signup
 app.post('/api/referral/apply', authMiddleware, async (req, res) => {
   try {
     const { referralCode } = req.body;
@@ -861,24 +1015,20 @@ app.post('/api/referral/apply', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Referral code is required' });
     }
     
-    // Find referrer
     const referrer = await User.findOne({ referralCode: referralCode.toUpperCase() });
     if (!referrer) {
       return res.status(404).json({ error: 'Invalid referral code' });
     }
     
-    // Check if user is trying to refer themselves
     if (referrer._id.toString() === userId) {
       return res.status(400).json({ error: 'You cannot refer yourself' });
     }
     
-    // Check if user already used a referral
     const user = await User.findById(userId);
     if (user.referredBy) {
       return res.status(400).json({ error: 'You have already been referred' });
     }
     
-    // Apply referral
     user.referredBy = referrer._id;
     await user.save();
     
@@ -893,7 +1043,6 @@ app.post('/api/referral/apply', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ Process referral reward after first order
 app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
   try {
     const { orderId } = req.body;
@@ -902,12 +1051,10 @@ app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
     const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
     
-    // Check if referral program is enabled
     if (!settings.isEnabled) {
       return res.status(400).json({ error: 'Referral program is currently disabled' });
     }
     
-    // Get user and order
     const user = await User.findById(userId);
     const order = await Order.findById(orderId);
     
@@ -915,30 +1062,25 @@ app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     
-    // Check minimum order value
     if (order.total < settings.minimumOrderValue) {
       return res.status(400).json({ 
         error: `Minimum order value of ₹${settings.minimumOrderValue} required for referral reward` 
       });
     }
     
-    // Check if user already claimed referral bonus
     if (user.hasClaimedReferral) {
       return res.status(400).json({ error: 'You have already claimed your referral bonus' });
     }
     
-    // Check if user was referred
     if (!user.referredBy) {
       return res.status(400).json({ error: 'You were not referred by anyone' });
     }
     
-    // Find referrer
     const referrer = await User.findById(user.referredBy);
     if (!referrer) {
       return res.status(404).json({ error: 'Referrer not found' });
     }
     
-    // Check if referrer already got reward for this user
     const alreadyRewarded = referrer.referrals.some(r => 
       r.userId.toString() === userId && r.status === 'paid'
     );
@@ -947,7 +1089,6 @@ app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Referral reward already processed' });
     }
     
-    // Give reward to referrer
     const rewardAmount = settings.rewardAmount;
     
     referrer.wallet.balance += rewardAmount;
@@ -957,7 +1098,6 @@ app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
       description: `Referral reward for ${user.name} (${user.phone}) - Order #${order.orderId}`
     });
     
-    // Add to referrals list
     referrer.referrals.push({
       userId: user._id,
       orderId: order._id,
@@ -968,11 +1108,9 @@ app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
     
     await referrer.save();
     
-    // Mark user as having claimed referral
     user.hasClaimedReferral = true;
     await user.save();
     
-    // Give welcome bonus to new user (optional)
     if (settings.welcomeBonus > 0) {
       user.wallet.balance += settings.welcomeBonus;
       user.wallet.transactions.push({
@@ -998,7 +1136,6 @@ app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ Get referral leaderboard (public)
 app.get('/api/referral/leaderboard', async (req, res) => {
   try {
     const topReferrers = await User.find({
@@ -1024,7 +1161,6 @@ app.get('/api/referral/leaderboard', async (req, res) => {
   }
 });
 
-// ✅ Admin: Get all referrals analytics
 app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const ReferralSettings = require('./models/ReferralSettings');
@@ -1078,7 +1214,6 @@ app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async 
 
 // ============ PAYMENT METHOD ROUTES ============
 
-// Get all payment methods
 app.get('/api/payment-methods', async (req, res) => {
   try {
     const methods = await PaymentMethod.find().sort({ createdAt: -1 });
@@ -1088,7 +1223,6 @@ app.get('/api/payment-methods', async (req, res) => {
   }
 });
 
-// Get active payment method
 app.get('/api/payment-methods/active', async (req, res) => {
   try {
     const active = await PaymentMethod.findOne({ isActive: true });
@@ -1098,7 +1232,6 @@ app.get('/api/payment-methods/active', async (req, res) => {
   }
 });
 
-// Create payment method
 app.post('/api/payment-methods', async (req, res) => {
   try {
     const { upiId, qrCode, name } = req.body;
@@ -1110,7 +1243,6 @@ app.post('/api/payment-methods', async (req, res) => {
   }
 });
 
-// Update payment method (activate/deactivate)
 app.put('/api/payment-methods/:id', async (req, res) => {
   try {
     const { isActive } = req.body;
@@ -1128,7 +1260,6 @@ app.put('/api/payment-methods/:id', async (req, res) => {
   }
 });
 
-// Delete payment method
 app.delete('/api/payment-methods/:id', async (req, res) => {
   try {
     await PaymentMethod.findByIdAndDelete(req.params.id);
@@ -1138,13 +1269,10 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
   }
 });
 
-// ============ CONTACT ROUTES (already registered above) ============
-
 // ============================================
 // ✅ PAYMENT VERIFICATION ROUTES
 // ============================================
 
-// Get order status for verification
 app.get('/api/orders/verify/:orderId', async (req, res) => {
   try {
     const order = await Order.findOne({ orderId: req.params.orderId });
@@ -1163,7 +1291,6 @@ app.get('/api/orders/verify/:orderId', async (req, res) => {
   }
 });
 
-// Manual payment confirmation (fallback)
 app.post('/api/orders/confirm-payment', authMiddleware, async (req, res) => {
   try {
     const { orderId } = req.body;
@@ -1174,7 +1301,6 @@ app.post('/api/orders/confirm-payment', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     
-    // Verify order belongs to user
     if (order.userId && order.userId.toString() !== userId) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -1198,24 +1324,11 @@ app.post('/api/orders/notify-verification-failed', authMiddleware, async (req, r
   try {
     const { orderId, reason } = req.body;
     
-    // Log the failure for admin dashboard
     console.log(`⚠️ PAYMENT VERIFICATION FAILED for Order: ${orderId}`);
     console.log(`   Reason: ${reason}`);
     console.log(`   User: ${req.userId}`);
     console.log(`   Time: ${new Date().toISOString()}`);
     
-    // Option 1: Send email notification to admin
-    // You can integrate with nodemailer, SendGrid, etc.
-    
-    // Option 2: Store in database for admin dashboard
-    // Create a PaymentFailure model or add to order
-    
-    // Option 3: Send to a webhook (Slack, Discord, etc.)
-    // await axios.post('https://hooks.slack.com/services/...', {
-    //   text: `⚠️ Payment verification failed for Order ${orderId}`
-    // });
-    
-    // For now, just log it
     res.json({ 
       success: true, 
       message: 'Admin notified',
@@ -1228,19 +1341,13 @@ app.post('/api/orders/notify-verification-failed', authMiddleware, async (req, r
 });
 
 // ============================================
-// END PAYMENT VERIFICATION ROUTES
-// ============================================
-
-// ============================================
 // ✅ ORDER CREATION ROUTE WITH PINCODE VALIDATION
 // ============================================
 
-// ✅ UPDATED: Create new order with pincode validation
 app.post('/api/orders', authMiddleware, async (req, res) => {
   try {
     const { customer, items, subtotal, shipping, discount, couponCode, total } = req.body;
     
-    // ✅ Validate pincode if present
     if (customer?.address?.pincode) {
       const pincode = customer.address.pincode;
       const validation = await validatePincode(pincode);
@@ -1252,23 +1359,17 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
         });
       }
       
-      // ✅ Auto-correct city and state if they don't match
       if (validation.city && validation.state) {
-        // If user entered wrong city/state, auto-correct them
         customer.address.city = validation.city;
         customer.address.state = validation.state;
         console.log(`✅ Auto-corrected address: ${customer.address.city}, ${customer.address.state}`);
       }
     }
     
-    // Check if user is logged in
     const userId = req.userId || null;
-    
-    // Generate order ID
     const orderCount = await Order.countDocuments();
     const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
     
-    // Create order data
     const orderData = {
       orderId,
       customer,
@@ -1291,7 +1392,9 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     const order = new Order(orderData);
     await order.save();
     
-    // Update user's order list if logged in
+    // ✅ Send new order notification to admin
+    await notificationService.notifyNewOrder(order);
+    
     if (userId) {
       await User.findByIdAndUpdate(userId, {
         $push: { orderIds: order._id },
@@ -1299,7 +1402,6 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
       });
     }
     
-    // Update product totalSold
     for (const item of items) {
       await Product.findByIdAndUpdate(item.productId, {
         $inc: { totalSold: item.quantity }
@@ -1314,7 +1416,222 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
 });
 
 // ============================================
-// END ORDER CREATION ROUTE
+// ✅ ADVANCED ORDER MANAGEMENT ROUTES
+// ============================================
+
+// ✅ Update order status with stock deduction & notifications
+app.put('/api/orders/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // ✅ Stock deduction when moving to processing
+    if (status === 'processing' && order.status === 'pending') {
+      for (const item of order.items) {
+        const product = await Product.findById(item.productId);
+        if (product) {
+          if (product.stock < item.quantity) {
+            return res.status(400).json({
+              error: `Insufficient stock for ${product.name}. Available: ${product.stock}`
+            });
+          }
+          product.stock -= item.quantity;
+          await product.save();
+        }
+      }
+      await notificationService.notifyPaymentReceived(order);
+    }
+
+    // ✅ Restore stock if cancelled from processing
+    if (status === 'cancelled' && order.status === 'processing') {
+      for (const item of order.items) {
+        const product = await Product.findById(item.productId);
+        if (product) {
+          product.stock += item.quantity;
+          await product.save();
+        }
+      }
+    }
+
+    // ✅ Notifications for status changes
+    if (status === 'shipped') {
+      await notificationService.notifyCustomerShipped(order);
+    }
+    if (status === 'delivered') {
+      await notificationService.notifyCustomerDelivered(order);
+    }
+
+    order.status = status;
+    order.timeline.push({
+      status: status,
+      description: `Order ${status} by admin`,
+      timestamp: new Date()
+    });
+    await order.save();
+
+    res.json(order);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ✅ Add tracking number to order
+app.post('/api/orders/:id/tracking', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { trackingNumber, courier, courierName, trackingUrl } = req.body;
+    const order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    order.tracking = {
+      number: trackingNumber,
+      courier: courier || 'other',
+      courierName: courierName || '',
+      url: trackingUrl || '',
+      updatedAt: new Date()
+    };
+
+    // Auto-update to shipped if currently processing
+    if (order.status === 'processing') {
+      order.status = 'shipped';
+      order.timeline.push({
+        status: 'shipped',
+        description: `Order shipped via ${courierName || courier} - Tracking: ${trackingNumber}`,
+        timestamp: new Date()
+      });
+      await notificationService.notifyCustomerShipped(order);
+    }
+
+    await order.save();
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ✅ Generate PDF Invoice
+app.get('/api/orders/:id/invoice', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const pdfBuffer = await generateInvoice(order);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=invoice-${order.orderId}.pdf`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('Invoice generation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Advanced Analytics Dashboard
+app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(startOfWeek.getDate() - 7);
+    const startOfMonth = new Date(now);
+    startOfMonth.setMonth(startOfMonth.getMonth() - 1);
+
+    // Revenue Stats
+    const revenue = await Order.aggregate([
+      { $match: { paymentStatus: 'paid' } },
+      { $group: {
+        _id: null,
+        total: { $sum: '$total' },
+        today: {
+          $sum: {
+            $cond: [{ $gte: ['$createdAt', startOfDay] }, '$total', 0]
+          }
+        },
+        week: {
+          $sum: {
+            $cond: [{ $gte: ['$createdAt', startOfWeek] }, '$total', 0]
+          }
+        },
+        month: {
+          $sum: {
+            $cond: [{ $gte: ['$createdAt', startOfMonth] }, '$total', 0]
+          }
+        }
+      }}
+    ]);
+
+    // Order Stats
+    const orderStats = await Order.aggregate([
+      { $group: {
+        _id: '$status',
+        count: { $sum: 1 }
+      }}
+    ]);
+
+    const statusCounts = {};
+    orderStats.forEach(s => statusCounts[s._id] = s.count);
+
+    // Customer Stats
+    const customerStats = await User.aggregate([
+      { $group: {
+        _id: null,
+        total: { $sum: 1 },
+        withOrders: {
+          $sum: {
+            $cond: [{ $gt: [{ $size: '$orderIds' }, 0] }, 1, 0]
+          }
+        }
+      }}
+    ]);
+
+    // Top Products
+    const topProducts = await Order.aggregate([
+      { $unwind: '$items' },
+      { $group: {
+        _id: '$items.productId',
+        name: { $first: '$items.name' },
+        totalSold: { $sum: '$items.quantity' },
+        revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }
+      }},
+      { $sort: { totalSold: -1 } },
+      { $limit: 5 }
+    ]);
+
+    res.json({
+      revenue: revenue[0] || { total: 0, today: 0, week: 0, month: 0 },
+      orders: {
+        total: await Order.countDocuments(),
+        pending: statusCounts.pending || 0,
+        processing: statusCounts.processing || 0,
+        shipped: statusCounts.shipped || 0,
+        delivered: statusCounts.delivered || 0,
+        cancelled: statusCounts.cancelled || 0
+      },
+      customers: {
+        total: customerStats[0]?.total || 0,
+        withOrders: customerStats[0]?.withOrders || 0
+      },
+      topProducts,
+      averageOrderValue: revenue[0]?.total ? 
+        Math.round(revenue[0].total / (await Order.countDocuments({ paymentStatus: 'paid' }))) : 0
+    });
+  } catch (err) {
+    console.error('Analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// END ORDER MANAGEMENT ROUTES
 // ============================================
 
 const PORT = process.env.PORT || 5002;
