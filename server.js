@@ -6,6 +6,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
 
 dotenv.config();
 
@@ -40,6 +42,12 @@ const contactRoutes = require('./routes/contactRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const variantRoutes = require('./routes/variantRoutes');
+
+// ✅ Initialize Razorpay
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET
+});
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -114,7 +122,6 @@ const validatePincode = async (pincode) => {
 class NotificationService {
   constructor() {
     this.transporter = null;
-    // Only setup if email credentials exist
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
       try {
         const nodemailer = require('nodemailer');
@@ -165,44 +172,6 @@ class NotificationService {
     `;
     return this.sendEmail(adminEmail, subject, html);
   }
-
-  async notifyPaymentReceived(order) {
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@loopstore.in';
-    const subject = `✅ Payment Received for Order #${order.orderId}`;
-    const html = `
-      <h2>Payment Confirmed! 💰</h2>
-      <p><strong>Order ID:</strong> ${order.orderId}</p>
-      <p><strong>Amount:</strong> ₹${order.total}</p>
-      <p><strong>Customer:</strong> ${order.customer?.name || 'Guest'}</p>
-      <p><a href="${process.env.ADMIN_URL || 'https://loopstore.in/admin'}">View Order</a></p>
-    `;
-    return this.sendEmail(adminEmail, subject, html);
-  }
-
-  async notifyCustomerShipped(order) {
-    if (!order.customer?.email) return;
-    const subject = `🚚 Your Order #${order.orderId} has been Shipped!`;
-    const trackingInfo = order.tracking?.number ? `<p><strong>Tracking:</strong> ${order.tracking.number}</p>` : '';
-    const html = `
-      <h2>Your Order is on the Way! 🚚</h2>
-      <p><strong>Order ID:</strong> ${order.orderId}</p>
-      ${trackingInfo}
-      <p><a href="${process.env.FRONTEND_URL || 'https://loopstore.in'}/orders">Track Your Order</a></p>
-    `;
-    return this.sendEmail(order.customer.email, subject, html);
-  }
-
-  async notifyCustomerDelivered(order) {
-    if (!order.customer?.email) return;
-    const subject = `✅ Your Order #${order.orderId} has been Delivered!`;
-    const html = `
-      <h2>Order Delivered! 🎉</h2>
-      <p><strong>Order ID:</strong> ${order.orderId}</p>
-      <p>Thank you for shopping with LOOP! We hope you love your items.</p>
-      <p><a href="${process.env.FRONTEND_URL || 'https://loopstore.in'}/orders">View Your Order</a></p>
-    `;
-    return this.sendEmail(order.customer.email, subject, html);
-  }
 }
 
 const notificationService = new NotificationService();
@@ -218,28 +187,15 @@ const generateInvoice = (order) => {
       doc.on('data', chunk => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
 
-      // Header - Logo
-      doc.fontSize(24)
-         .fillColor('#D4AF37')
-         .text('LOOP', { align: 'center' })
-         .fontSize(14)
-         .fillColor('#888')
-         .text('Make your move', { align: 'center' })
-         .moveDown();
+      doc.fontSize(24).fillColor('#D4AF37').text('LOOP', { align: 'center' });
+      doc.fontSize(14).fillColor('#888').text('Make your move', { align: 'center' }).moveDown();
+      doc.fontSize(20).fillColor('#000').text('INVOICE', { align: 'center' }).moveDown();
 
-      // Invoice Title
-      doc.fontSize(20)
-         .fillColor('#000')
-         .text('INVOICE', { align: 'center' })
-         .moveDown();
-
-      // Order Details
       doc.fontSize(12).fillColor('#333');
       doc.text(`Order ID: ${order.orderId}`, { continued: true })
          .text(`Date: ${new Date(order.createdAt).toLocaleDateString()}`, { align: 'right' });
       doc.moveDown();
 
-      // Customer Details
       doc.fontSize(14).fillColor('#D4AF37').text('Customer Details');
       doc.fontSize(12).fillColor('#333');
       doc.text(`Name: ${order.customer?.name || 'Guest'}`);
@@ -247,7 +203,6 @@ const generateInvoice = (order) => {
       doc.text(`Phone: ${order.customer?.phone || 'N/A'}`);
       doc.moveDown();
 
-      // Shipping Address
       doc.fontSize(14).fillColor('#D4AF37').text('Shipping Address');
       doc.fontSize(12).fillColor('#333');
       const addr = order.customer?.address;
@@ -258,7 +213,6 @@ const generateInvoice = (order) => {
       }
       doc.moveDown();
 
-      // Items Table
       doc.fontSize(14).fillColor('#D4AF37').text('Items Ordered');
       doc.fontSize(12).fillColor('#333');
 
@@ -336,7 +290,6 @@ app.use('/api/categories', categoryRoutes);
 
 // ============ PRODUCT ROUTES ============
 
-// Get all products
 app.get('/api/products', async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
@@ -346,7 +299,6 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Get product by slug
 app.get('/api/products/:slug', async (req, res) => {
   try {
     const slug = req.params.slug;
@@ -379,7 +331,6 @@ app.get('/api/products/:slug', async (req, res) => {
   }
 });
 
-// Get product by MongoDB _id (for admin)
 app.get('/api/products/id/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -390,7 +341,6 @@ app.get('/api/products/id/:id', async (req, res) => {
   }
 });
 
-// Create product
 app.post('/api/products', async (req, res) => {
   try {
     if (req.body.productId) {
@@ -407,7 +357,6 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
-// Update product
 app.put('/api/products/:id', async (req, res) => {
   try {
     if (req.body.productId) {
@@ -429,7 +378,6 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-// ============ DELETE PRODUCT ============
 app.delete('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
@@ -443,7 +391,6 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// Toggle product status
 app.patch('/api/products/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
@@ -717,7 +664,6 @@ app.post('/api/users/:id/wallet', async (req, res) => {
 
 // ============ AUTH ROUTES ============
 
-// Signup
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { name, email, phone, password } = req.body;
@@ -769,7 +715,6 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// Login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -816,7 +761,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Phone Login (OTP)
 app.post('/api/auth/phone-login', async (req, res) => {
   try {
     const { phone, uid } = req.body;
@@ -872,7 +816,6 @@ app.post('/api/auth/phone-login', async (req, res) => {
   }
 });
 
-// Forgot Password
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -890,7 +833,6 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 });
 
-// Get Current User (Me)
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     if (!req.userId) {
@@ -1270,6 +1212,152 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
 });
 
 // ============================================
+// ✅ RAZORPAY PAYMENT ROUTES
+// ============================================
+
+// ✅ Create Razorpay Order
+app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
+  try {
+    const { amount, orderId } = req.body;
+    
+    const options = {
+      amount: amount * 100, // Convert to paise
+      currency: 'INR',
+      receipt: orderId,
+      payment_capture: 1 // Auto-capture payment
+    };
+    
+    const order = await razorpay.orders.create(options);
+    res.json(order);
+  } catch (err) {
+    console.error('Razorpay order error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Verify Razorpay Payment
+app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
+  try {
+    const { razorpay_payment_id, razorpay_order_id, razorpay_signature, orderId } = req.body;
+    
+    // Verify signature
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest('hex');
+    
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ error: 'Invalid payment signature' });
+    }
+    
+    // Update order
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    order.paymentStatus = 'paid';
+    order.status = 'processing';
+    order.paymentMethod = 'razorpay';
+    order.paymentDetails = {
+      razorpay_payment_id,
+      razorpay_order_id,
+      razorpay_signature,
+      capturedAt: new Date()
+    };
+    order.timeline.push({
+      status: 'processing',
+      description: `Payment confirmed via Razorpay (${razorpay_payment_id})`,
+      timestamp: new Date()
+    });
+    
+    await order.save();
+    
+    // Stock deduction
+    for (const item of order.items) {
+      const product = await Product.findById(item.productId);
+      if (product) {
+        product.stock -= item.quantity;
+        await product.save();
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Payment verified successfully',
+      order: order
+    });
+  } catch (err) {
+    console.error('Verification error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Razorpay Webhook (Auto-confirm payments)
+app.post('/api/razorpay-webhook', async (req, res) => {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const signature = req.headers['x-razorpay-signature'];
+    
+    // Verify webhook signature
+    const body = JSON.stringify(req.body);
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(body)
+      .digest('hex');
+    
+    if (signature !== expectedSignature) {
+      return res.status(400).json({ error: 'Invalid webhook signature' });
+    }
+    
+    const { event, payload } = req.body;
+    
+    if (event === 'payment.captured') {
+      const payment = payload.payment.entity;
+      const orderId = payment.notes?.order_id;
+      
+      if (orderId) {
+        const order = await Order.findOne({ orderId });
+        if (order && order.paymentStatus !== 'paid') {
+          order.paymentStatus = 'paid';
+          order.status = 'processing';
+          order.paymentDetails = {
+            razorpay_payment_id: payment.id,
+            razorpay_order_id: payment.order_id,
+            capturedAt: new Date()
+          };
+          order.timeline.push({
+            status: 'processing',
+            description: `Payment confirmed via Razorpay webhook (${payment.id})`,
+            timestamp: new Date()
+          });
+          await order.save();
+          
+          // Stock deduction
+          for (const item of order.items) {
+            const product = await Product.findById(item.productId);
+            if (product) {
+              product.stock -= item.quantity;
+              await product.save();
+            }
+          }
+        }
+      }
+    }
+    
+    res.json({ received: true });
+  } catch (err) {
+    console.error('Webhook error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// END RAZORPAY ROUTES
+// ============================================
+
+// ============================================
 // ✅ PAYMENT VERIFICATION ROUTES
 // ============================================
 
@@ -1392,7 +1480,6 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     const order = new Order(orderData);
     await order.save();
     
-    // ✅ Send new order notification to admin
     await notificationService.notifyNewOrder(order);
     
     if (userId) {
@@ -1419,7 +1506,6 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
 // ✅ ADVANCED ORDER MANAGEMENT ROUTES
 // ============================================
 
-// ✅ Update order status with stock deduction & notifications
 app.put('/api/orders/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { status } = req.body;
@@ -1429,7 +1515,6 @@ app.put('/api/orders/:id', authMiddleware, adminMiddleware, async (req, res) => 
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // ✅ Stock deduction when moving to processing
     if (status === 'processing' && order.status === 'pending') {
       for (const item of order.items) {
         const product = await Product.findById(item.productId);
@@ -1443,10 +1528,8 @@ app.put('/api/orders/:id', authMiddleware, adminMiddleware, async (req, res) => 
           await product.save();
         }
       }
-      await notificationService.notifyPaymentReceived(order);
     }
 
-    // ✅ Restore stock if cancelled from processing
     if (status === 'cancelled' && order.status === 'processing') {
       for (const item of order.items) {
         const product = await Product.findById(item.productId);
@@ -1455,14 +1538,6 @@ app.put('/api/orders/:id', authMiddleware, adminMiddleware, async (req, res) => 
           await product.save();
         }
       }
-    }
-
-    // ✅ Notifications for status changes
-    if (status === 'shipped') {
-      await notificationService.notifyCustomerShipped(order);
-    }
-    if (status === 'delivered') {
-      await notificationService.notifyCustomerDelivered(order);
     }
 
     order.status = status;
@@ -1479,7 +1554,6 @@ app.put('/api/orders/:id', authMiddleware, adminMiddleware, async (req, res) => 
   }
 });
 
-// ✅ Add tracking number to order
 app.post('/api/orders/:id/tracking', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { trackingNumber, courier, courierName, trackingUrl } = req.body;
@@ -1497,7 +1571,6 @@ app.post('/api/orders/:id/tracking', authMiddleware, adminMiddleware, async (req
       updatedAt: new Date()
     };
 
-    // Auto-update to shipped if currently processing
     if (order.status === 'processing') {
       order.status = 'shipped';
       order.timeline.push({
@@ -1505,7 +1578,6 @@ app.post('/api/orders/:id/tracking', authMiddleware, adminMiddleware, async (req
         description: `Order shipped via ${courierName || courier} - Tracking: ${trackingNumber}`,
         timestamp: new Date()
       });
-      await notificationService.notifyCustomerShipped(order);
     }
 
     await order.save();
@@ -1515,7 +1587,6 @@ app.post('/api/orders/:id/tracking', authMiddleware, adminMiddleware, async (req
   }
 });
 
-// ✅ Generate PDF Invoice
 app.get('/api/orders/:id/invoice', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
@@ -1534,7 +1605,6 @@ app.get('/api/orders/:id/invoice', authMiddleware, adminMiddleware, async (req, 
   }
 });
 
-// ✅ Advanced Analytics Dashboard
 app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const now = new Date();
@@ -1545,7 +1615,6 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
     const startOfMonth = new Date(now);
     startOfMonth.setMonth(startOfMonth.getMonth() - 1);
 
-    // Revenue Stats
     const revenue = await Order.aggregate([
       { $match: { paymentStatus: 'paid' } },
       { $group: {
@@ -1569,7 +1638,6 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
       }}
     ]);
 
-    // Order Stats
     const orderStats = await Order.aggregate([
       { $group: {
         _id: '$status',
@@ -1580,7 +1648,6 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
     const statusCounts = {};
     orderStats.forEach(s => statusCounts[s._id] = s.count);
 
-    // Customer Stats
     const customerStats = await User.aggregate([
       { $group: {
         _id: null,
@@ -1593,7 +1660,6 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
       }}
     ]);
 
-    // Top Products
     const topProducts = await Order.aggregate([
       { $unwind: '$items' },
       { $group: {
