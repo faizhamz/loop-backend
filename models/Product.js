@@ -1,97 +1,124 @@
 const mongoose = require('mongoose');
 
-const variantOptionSchema = new mongoose.Schema({
-  value: { type: String, required: true },
-  price: { type: Number, default: 0 },
-  stock: { type: Number, default: 0 },
-  sku: { type: String, unique: true, sparse: true }
-});
-
-const variantSchema = new mongoose.Schema({
-  type: { type: String, required: true }, // "Size", "Color", "Engine", etc.
-  name: { type: String, required: true },
-  options: [variantOptionSchema]
-});
-
-const productSchema = new mongoose.Schema({
-  productId: {
-    type: String,
-    unique: true,
-    sparse: true
-  },
+const orderItemSchema = new mongoose.Schema({
+  productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+  variantId: { type: mongoose.Schema.Types.ObjectId },
   name: { type: String, required: true },
   price: { type: Number, required: true },
-  salePrice: { type: Number, default: null },
-  stock: { type: Number, required: true, default: 0 },
-  
-  // Images with multiple sizes
-  image: { type: String, default: '' },
-  images: [{ type: String }],
-  thumbnail: { type: String, default: '' },
-  medium: { type: String, default: '' },
-  large: { type: String, default: '' },
-  videos: [{ type: String }],
-  
-  description: { type: String, default: '' },
-  category: { type: String, default: 'Uncategorized' },
-  categories: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category'
-  }],
+  quantity: { type: Number, required: true, min: 1 },
+  size: { type: String, default: 'M' },
   color: { type: String, default: 'Black' },
-  size: { type: String, enum: ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'One Size'], default: 'M' },
-  
+  isReviewed: { type: Boolean, default: false }
+});
+
+const orderSchema = new mongoose.Schema({
+  orderId: { type: String, unique: true },
+  customer: {
+    name: { type: String, required: true },
+    email: { type: String, required: true },
+    phone: { type: String },
+    address: {
+      street: String,
+      city: String,
+      state: String,
+      pincode: String,
+      landmark: String
+    }
+  },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  items: [orderItemSchema],
+  subtotal: { type: Number, required: true },
+  shipping: { type: Number, default: 60 },
+  discount: { type: Number, default: 0 },
+  couponCode: { type: String, default: '' },
+  total: { type: Number, required: true },
+  paymentMethod: { type: String, enum: ['upi', 'razorpay'], default: 'upi' },
+  paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
   status: { 
     type: String, 
-    enum: ['active', 'inactive', 'discontinued'], 
-    default: 'active' 
+    enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned'], 
+    default: 'pending' 
   },
-  isActive: { type: Boolean, default: true },
   
-  // Dynamic variants
-  variants: [variantSchema],
-  hasVariants: { type: Boolean, default: false },
+  // ✅ Tracking Information
+  tracking: {
+    number: { type: String, default: '' },
+    courier: { type: String, enum: ['delhivery', 'bluedart', 'dtdc', 'xpressbees', 'other', ''], default: '' },
+    courierName: { type: String, default: '' },
+    url: { type: String, default: '' },
+    updatedAt: { type: Date, default: null }
+  },
   
-  // Sales tracking
-  totalSold: { type: Number, default: 0 },
+  // ✅ Payment Details (for Razorpay)
+  paymentDetails: {
+    razorpay_payment_id: { type: String, default: '' },
+    razorpay_order_id: { type: String, default: '' },
+    razorpay_signature: { type: String, default: '' },
+    capturedAt: { type: Date, default: null }
+  },
   
-  // Analytics
-  totalViews: { type: Number, default: 0 },
-  uniqueViewers: { type: Number, default: 0 },
+  timeline: [{
+    status: String,
+    description: String,
+    timestamp: { type: Date, default: Date.now }
+  }],
   
-  // Review stats
-  avgRating: { type: Number, default: 0 },
-  reviewCount: { type: Number, default: 0 },
-  totalReviews: { type: Number, default: 0 },
+  postOrderRating: { type: Number, min: 1, max: 5 },
+  postOrderComment: { type: String, default: '' },
+  postOrderRatedAt: { type: Date },
   
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
 
-// Auto-generate productId
-productSchema.pre('save', async function(next) {
+// Auto-generate orderId
+orderSchema.pre('save', function(next) {
   this.updatedAt = new Date();
-  if (!this.productId) {
-    const count = await mongoose.model('Product').countDocuments();
-    const paddedNumber = String(count + 1).padStart(4, '0');
-    this.productId = `LOOP${paddedNumber}`;
+  if (!this.orderId) {
+    const date = new Date();
+    const prefix = `LOOP-${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    this.orderId = `${prefix}-${String(Math.floor(100000 + Math.random() * 900000))}`;
   }
-  // Calculate total stock from variants if hasVariants
-  if (this.hasVariants && this.variants.length > 0) {
-    let totalStock = 0;
-    this.variants.forEach(variant => {
-      variant.options.forEach(opt => {
-        totalStock += opt.stock || 0;
-      });
-    });
-    this.stock = totalStock;
+  if (this.isNew) {
+    this.timeline = [{
+      status: 'pending',
+      description: 'Order placed successfully',
+      timestamp: new Date()
+    }];
   }
   next();
 });
 
-// Indexes
-productSchema.index({ productId: 1 }, { unique: true, sparse: true });
-productSchema.index({ category: 1 });
-productSchema.index({ isActive: 1 });
+// ✅ Method to update status with timeline
+orderSchema.methods.updateStatus = function(newStatus, description = '') {
+  const validTransitions = {
+    'pending': ['processing', 'cancelled'],
+    'processing': ['shipped', 'cancelled'],
+    'shipped': ['delivered', 'cancelled'],
+    'delivered': ['returned'],
+    'cancelled': [],
+    'returned': []
+  };
+  
+  if (!validTransitions[this.status]?.includes(newStatus)) {
+    throw new Error(`Invalid status transition: ${this.status} → ${newStatus}`);
+  }
+  
+  this.status = newStatus;
+  this.timeline.push({
+    status: newStatus,
+    description: description || `Order ${newStatus}`,
+    timestamp: new Date()
+  });
+  
+  return this.save();
+};
 
-module.exports = mongoose.model('Product', productSchema);
+// Indexes
+orderSchema.index({ orderId: 1 }, { unique: true });
+orderSchema.index({ userId: 1 });
+orderSchema.index({ createdAt: -1 });
+orderSchema.index({ status: 1 });
+orderSchema.index({ paymentStatus: 1 });
+
+module.exports = mongoose.model('Order', orderSchema);

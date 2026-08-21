@@ -43,11 +43,21 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const variantRoutes = require('./routes/variantRoutes');
 
-// ✅ Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+// ✅ Initialize Razorpay with fallback
+let razorpay = null;
+try {
+  if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+    razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET
+    });
+    console.log('✅ Razorpay initialized');
+  } else {
+    console.log('⚠️ Razorpay keys missing — payment disabled. Add keys to enable.');
+  }
+} catch (err) {
+  console.log('⚠️ Razorpay initialization failed:', err.message);
+}
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -1218,6 +1228,10 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
 // ✅ Create Razorpay Order
 app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
   try {
+    if (!razorpay) {
+      return res.status(503).json({ error: 'Razorpay is not configured. Please add API keys.' });
+    }
+    
     const { amount, orderId } = req.body;
     
     const options = {
