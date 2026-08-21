@@ -40,13 +40,21 @@ const orderSchema = new mongoose.Schema({
     default: 'pending' 
   },
   
-  // ✅ NEW: Tracking Information
+  // ✅ Tracking Information
   tracking: {
     number: { type: String, default: '' },
     courier: { type: String, enum: ['delhivery', 'bluedart', 'dtdc', 'xpressbees', 'other', ''], default: '' },
     courierName: { type: String, default: '' },
     url: { type: String, default: '' },
     updatedAt: { type: Date, default: null }
+  },
+  
+  // ✅ Payment Details (for Razorpay)
+  paymentDetails: {
+    razorpay_payment_id: { type: String, default: '' },
+    razorpay_order_id: { type: String, default: '' },
+    razorpay_signature: { type: String, default: '' },
+    capturedAt: { type: Date, default: null }
   },
   
   timeline: [{
@@ -81,7 +89,7 @@ orderSchema.pre('save', function(next) {
   next();
 });
 
-// ✅ NEW: Method to update status with timeline
+// ✅ Method to update status with timeline
 orderSchema.methods.updateStatus = function(newStatus, description = '') {
   const validTransitions = {
     'pending': ['processing', 'cancelled'],
@@ -113,4 +121,5 @@ orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ paymentStatus: 1 });
 
-module.exports = mongoose.model('Order', orderSchema);
+// ✅ Prevent model overwrite error
+module.exports = mongoose.models.Order || mongoose.model('Order', orderSchema);
