@@ -1235,10 +1235,10 @@ app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
     const { amount, orderId } = req.body;
     
     const options = {
-      amount: amount * 100, // Convert to paise
+      amount: amount * 100,
       currency: 'INR',
       receipt: orderId,
-      payment_capture: 1 // Auto-capture payment
+      payment_capture: 1
     };
     
     const order = await razorpay.orders.create(options);
@@ -1254,7 +1254,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
   try {
     const { razorpay_payment_id, razorpay_order_id, razorpay_signature, orderId } = req.body;
     
-    // Verify signature
     const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
@@ -1265,7 +1264,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Invalid payment signature' });
     }
     
-    // Update order
     const order = await Order.findOne({ orderId });
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
@@ -1288,7 +1286,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
     
     await order.save();
     
-    // Stock deduction
     for (const item of order.items) {
       const product = await Product.findById(item.productId);
       if (product) {
@@ -1314,7 +1311,6 @@ app.post('/api/razorpay-webhook', async (req, res) => {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const signature = req.headers['x-razorpay-signature'];
     
-    // Verify webhook signature
     const body = JSON.stringify(req.body);
     const expectedSignature = crypto
       .createHmac('sha256', webhookSecret)
@@ -1348,7 +1344,6 @@ app.post('/api/razorpay-webhook', async (req, res) => {
           });
           await order.save();
           
-          // Stock deduction
           for (const item of order.items) {
             const product = await Product.findById(item.productId);
             if (product) {
@@ -1515,6 +1510,75 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+
+// ============================================
+// ✅ AUTO-CLEANUP PENDING ORDERS
+// ============================================
+
+// Auto-cancel pending orders older than 30 minutes
+app.post('/api/admin/cleanup-pending-orders', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    
+    const result = await Order.updateMany(
+      {
+        status: 'pending',
+        paymentStatus: 'pending',
+        createdAt: { $lt: thirtyMinutesAgo }
+      },
+      {
+        status: 'cancelled',
+        paymentStatus: 'failed',
+        $push: {
+          timeline: {
+            status: 'cancelled',
+            description: 'Order auto-cancelled due to payment timeout (30 minutes)',
+            timestamp: new Date()
+          }
+        }
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: `✅ ${result.modifiedCount} pending orders auto-cancelled`,
+      cancelledCount: result.modifiedCount
+    });
+  } catch (err) {
+    console.error('Cleanup error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get cleanup stats
+app.get('/api/admin/cleanup-stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    
+    const expiredPendingOrders = await Order.countDocuments({
+      status: 'pending',
+      paymentStatus: 'pending',
+      createdAt: { $lt: thirtyMinutesAgo }
+    });
+    
+    const totalPending = await Order.countDocuments({
+      status: 'pending',
+      paymentStatus: 'pending'
+    });
+    
+    res.json({
+      pendingOrders: totalPending,
+      expiredPendingOrders: expiredPendingOrders,
+      canCleanup: expiredPendingOrders > 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// END AUTO-CLEANUP ROUTES
+// ============================================
 
 // ============================================
 // ✅ ADVANCED ORDER MANAGEMENT ROUTES
