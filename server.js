@@ -40,11 +40,13 @@ const bannerRoutes = require('./routes/bannerRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
-const orderRoutes = require('./routes/orderRoutes');
 const variantRoutes = require('./routes/variantRoutes');
 
 // ✅ Import Cart Routes
 const cartRoutes = require('./routes/cartRoutes');
+
+// ✅ Import Order Routes
+const orderRoutes = require('./routes/orderRoutes');
 
 // ✅ Initialize Razorpay with fallback
 let razorpay = null;
@@ -225,6 +227,9 @@ app.use('/api/categories', categoryRoutes);
 
 // ============ CART ROUTES ============
 app.use('/api/cart', authMiddleware, cartRoutes);
+
+// ============ ORDER ROUTES ============
+app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ============ PRODUCT ROUTES ============
 
@@ -518,9 +523,6 @@ app.post('/api/coupons/bulk-generate', async (req, res) => {
   }
 });
 
-// ============ ORDER ROUTES ============
-app.use('/api/orders', authMiddleware, orderRoutes);
-
 // ============ USER ROUTES ============
 app.get('/api/users', async (req, res) => {
   try {
@@ -636,7 +638,6 @@ app.post('/api/auth/signup', async (req, res) => {
       return res.status(400).json({ error: 'Name, email, phone, and password are required' });
     }
     
-    // Check email duplicate
     const existingEmail = await User.findOne({ email });
     if (existingEmail) {
       return res.status(400).json({ 
@@ -645,7 +646,6 @@ app.post('/api/auth/signup', async (req, res) => {
       });
     }
     
-    // Check phone duplicate
     const existingPhone = await User.findOne({ phone });
     if (existingPhone) {
       return res.status(400).json({ 
@@ -1311,7 +1311,7 @@ app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ VERIFY RAZORPAY PAYMENT (FIXED - Strong verification)
+// ✅ VERIFY RAZORPAY PAYMENT (Fixed - Strong verification)
 app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
   try {
     const { razorpay_payment_id, razorpay_order_id, razorpay_signature, orderId } = req.body;
@@ -1591,105 +1591,6 @@ app.post('/api/orders/notify-verification-failed', authMiddleware, async (req, r
 });
 
 // ============================================
-// ✅ ORDER CREATION ROUTE (FIXED - Links to User)
-// ============================================
-
-app.post('/api/orders', authMiddleware, async (req, res) => {
-  try {
-    const { customer, items, subtotal, shipping, discount, couponCode, total } = req.body;
-    
-    // ✅ Get userId from authenticated user
-    const userId = req.userId;
-    
-    // ✅ CRITICAL: If user is not logged in, return error
-    if (!userId) {
-      return res.status(401).json({ error: 'Please login to place an order' });
-    }
-    
-    // ✅ Verify user exists
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found. Please login again.' });
-    }
-    
-    console.log('✅ Order being placed for user:', user.email, 'User ID:', userId);
-
-    // Calculate shipping
-    let calculatedShipping = 60;
-    if (subtotal >= 499) {
-      calculatedShipping = 0;
-    }
-    const finalShipping = shipping !== undefined ? shipping : calculatedShipping;
-
-    // Validate pincode
-    if (customer?.address?.pincode) {
-      const pincode = customer.address.pincode;
-      const validation = await validatePincode(pincode);
-      if (!validation.valid) {
-        return res.status(400).json({ 
-          error: validation.message,
-          field: 'pincode'
-        });
-      }
-      if (validation.city && validation.state) {
-        customer.address.city = validation.city;
-        customer.address.state = validation.state;
-      }
-    }
-
-    // ✅ Create order with userId
-    const orderCount = await Order.countDocuments();
-    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
-    
-    const orderData = {
-      orderId,
-      customer,
-      userId: userId,  // ✅ Link order to user
-      items,
-      subtotal,
-      shipping: finalShipping,
-      discount,
-      couponCode: couponCode || '',
-      total: total + finalShipping - (discount || 0),
-      paymentStatus: 'pending',
-      status: 'pending',
-      timeline: [{
-        status: 'pending',
-        description: 'Order placed successfully',
-        timestamp: new Date()
-      }]
-    };
-    
-    const order = new Order(orderData);
-    await order.save();
-    
-    // ✅ Update user's order list
-    if (userId) {
-      await User.findByIdAndUpdate(userId, {
-        $push: { orderIds: order._id },
-        $inc: { totalSpent: order.total }
-      });
-      console.log('✅ Order linked to user:', orderId);
-    }
-    
-    // Update product totalSold
-    for (const item of items) {
-      await Product.findByIdAndUpdate(item.productId, {
-        $inc: { totalSold: item.quantity }
-      });
-    }
-    
-    // Send email notification
-    await notificationService.notifyNewOrder(order);
-    
-    res.status(201).json(order);
-  } catch (err) {
-    console.error('Order creation error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ============================================
 // ✅ AUTO-CLEANUP PENDING ORDERS
 // ============================================
 
@@ -1757,7 +1658,7 @@ app.get('/api/admin/cleanup-stats', authMiddleware, adminMiddleware, async (req,
 // ============================================
 
 // ============================================
-// ✅ ADVANCED ORDER MANAGEMENT ROUTES
+// ✅ ADVANCED ORDER MANAGEMENT ROUTES (Admin)
 // ============================================
 
 app.put('/api/orders/:id', authMiddleware, adminMiddleware, async (req, res) => {
@@ -1859,6 +1760,14 @@ app.get('/api/orders/:id/invoice', authMiddleware, adminMiddleware, async (req, 
   }
 });
 
+// ============================================
+// END ORDER MANAGEMENT ROUTES
+// ============================================
+
+// ============================================
+// ✅ ADMIN ANALYTICS DASHBOARD
+// ============================================
+
 app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const now = new Date();
@@ -1949,10 +1858,6 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
     res.status(500).json({ error: err.message });
   }
 });
-
-// ============================================
-// END ORDER MANAGEMENT ROUTES
-// ============================================
 
 // ============================================
 // ✅ PDF INVOICE GENERATOR (Helper)
