@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');  // ✅ ADD THIS
 const router = express.Router();
 const Order = require('../models/Order');
 const Product = require('../models/Product');
@@ -21,7 +22,14 @@ router.get('/', async (req, res) => {
 // Get single order by ID (admin)
 router.get('/:id', async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
+    const orderId = req.params.id;
+    
+    // ✅ Check if it's a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID format' });
+    }
+    
+    const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ error: 'Order not found' });
     res.json(order);
   } catch (err) {
@@ -40,10 +48,28 @@ router.get('/my-orders', async (req, res) => {
     if (!userId) {
       return res.status(401).json({ error: 'Please login to view orders' });
     }
+    console.log('📦 Fetching orders for user:', userId);
+    
     const orders = await Order.find({ userId })
       .sort({ createdAt: -1 })
       .select('-paymentMethod -couponCode');
+    
+    console.log('📦 Orders found:', orders.length);
     res.json(orders);
+  } catch (err) {
+    console.error('Error fetching user orders:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get order by orderId (LOOP-001)
+router.get('/order/:orderId', async (req, res) => {
+  try {
+    const order = await Order.findOne({ orderId: req.params.orderId });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    res.json(order);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -73,7 +99,6 @@ router.post('/', async (req, res) => {
     const orderCount = await Order.countDocuments();
     const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
     
-    // If user is logged in, add userId
     const userId = req.userId || null;
     const orderData = { ...req.body, orderId };
     if (userId) {
@@ -83,7 +108,6 @@ router.post('/', async (req, res) => {
     const order = new Order(orderData);
     await order.save();
     
-    // Update user's order list if logged in
     if (userId) {
       await User.findByIdAndUpdate(userId, {
         $push: { orderIds: order._id },
@@ -91,7 +115,6 @@ router.post('/', async (req, res) => {
       });
     }
     
-    // Update product totalSold
     for (const item of order.items) {
       await Product.findByIdAndUpdate(item.productId, {
         $inc: { totalSold: item.quantity }
@@ -100,6 +123,7 @@ router.post('/', async (req, res) => {
     
     res.status(201).json(order);
   } catch (err) {
+    console.error('Order creation error:', err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -107,6 +131,12 @@ router.post('/', async (req, res) => {
 // Update order status (admin)
 router.put('/:id', async (req, res) => {
   try {
+    // Check if user is admin
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    
     const order = await Order.findByIdAndUpdate(
       req.params.id, 
       { status: req.body.status },
@@ -122,6 +152,11 @@ router.put('/:id', async (req, res) => {
 // Delete order (admin)
 router.delete('/:id', async (req, res) => {
   try {
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    
     await Order.findByIdAndDelete(req.params.id);
     res.json({ message: 'Order deleted' });
   } catch (err) {
@@ -129,9 +164,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// ============================================
-// NEW: Submit post-order rating
-// ============================================
+// Submit post-order rating
 router.post('/:orderId/rate', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -170,9 +203,7 @@ router.post('/:orderId/rate', async (req, res) => {
   }
 });
 
-// ============================================
-// NEW: Cancel order (within 1 hour)
-// ============================================
+// Cancel order (within 1 hour)
 router.post('/:orderId/cancel', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -187,7 +218,6 @@ router.post('/:orderId/cancel', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     
-    // Check if order can be cancelled (within 1 hour of placing)
     const now = new Date();
     const orderTime = new Date(order.createdAt);
     const diffMinutes = (now - orderTime) / (1000 * 60);
@@ -214,11 +244,14 @@ router.post('/:orderId/cancel', async (req, res) => {
   }
 });
 
-// ============================================
-// NEW: Update order status with timeline (admin)
-// ============================================
+// Update order status with timeline (admin)
 router.put('/admin/:id/status', async (req, res) => {
   try {
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    
     const { status } = req.body;
     const order = await Order.findById(req.params.id);
     if (!order) {
@@ -247,9 +280,7 @@ router.put('/admin/:id/status', async (req, res) => {
   }
 });
 
-// ============================================
-// NEW: Get order timeline
-// ============================================
+// Get order timeline
 router.get('/:orderId/timeline', async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -262,6 +293,71 @@ router.get('/:orderId/timeline', async (req, res) => {
     
     res.json(order.timeline || []);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Add tracking to order (admin)
+router.post('/:id/tracking', async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const { trackingNumber, courier, courierName, trackingUrl } = req.body;
+    const order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    order.tracking = {
+      number: trackingNumber,
+      courier: courier || 'other',
+      courierName: courierName || '',
+      url: trackingUrl || '',
+      updatedAt: new Date()
+    };
+
+    if (order.status === 'processing') {
+      order.status = 'shipped';
+      order.timeline.push({
+        status: 'shipped',
+        description: `Order shipped via ${courierName || courier} - Tracking: ${trackingNumber}`,
+        timestamp: new Date()
+      });
+    }
+
+    await order.save();
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get invoice (admin)
+router.get('/:id/invoice', async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // For now, return order data. Full PDF generation can be added later.
+    res.json({
+      message: 'Invoice data',
+      orderId: order.orderId,
+      total: order.total,
+      items: order.items
+    });
+  } catch (err) {
+    console.error('Invoice error:', err);
     res.status(500).json({ error: err.message });
   }
 });
