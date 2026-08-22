@@ -21,7 +21,7 @@ const userSchema = new mongoose.Schema({
   phoneVerified: { type: Boolean, default: false },
   password: { type: String, required: true },
   
-  // ✅ NEW PROFILE FIELDS
+  // Profile fields
   avatar: { type: String, default: '' },
   gender: { type: String, enum: ['Male', 'Female', 'Other', ''], default: '' },
   dob: { type: Date, default: null },
@@ -30,6 +30,17 @@ const userSchema = new mongoose.Schema({
   emailVerified: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
+  
+  // ✅ Cart (NEW - for cross-device sync)
+  cart: [{
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    name: String,
+    price: Number,
+    image: String,
+    size: String,
+    quantity: { type: Number, default: 1 },
+    addedAt: { type: Date, default: Date.now }
+  }],
   
   // Wallet
   wallet: {

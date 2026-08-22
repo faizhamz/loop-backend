@@ -43,6 +43,9 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const variantRoutes = require('./routes/variantRoutes');
 
+// ✅ IMPORT CART ROUTES (NEW)
+const cartRoutes = require('./routes/cartRoutes');
+
 // ✅ Initialize Razorpay with fallback
 let razorpay = null;
 try {
@@ -128,6 +131,64 @@ const validatePincode = async (pincode) => {
   }
 };
 
+// ============ NOTIFICATION SERVICE ============
+class NotificationService {
+  constructor() {
+    this.transporter = null;
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      try {
+        const nodemailer = require('nodemailer');
+        this.transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+          }
+        });
+        console.log('✅ Email service initialized');
+      } catch (e) {
+        console.log('⚠️ Email service not configured');
+      }
+    }
+  }
+
+  async sendEmail(to, subject, html) {
+    if (!this.transporter) {
+      console.log('📧 Email would be sent:', { to, subject });
+      return null;
+    }
+    try {
+      const info = await this.transporter.sendMail({
+        from: `"LOOP Store" <${process.env.EMAIL_USER}>`,
+        to,
+        subject,
+        html
+      });
+      console.log('📧 Email sent:', info.messageId);
+      return info;
+    } catch (error) {
+      console.error('Email error:', error);
+      return null;
+    }
+  }
+
+  async notifyNewOrder(order) {
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@loopstore.in';
+    const subject = `🛍️ New Order #${order.orderId}`;
+    const html = `
+      <h2>New Order Received! 🎉</h2>
+      <p><strong>Order ID:</strong> ${order.orderId}</p>
+      <p><strong>Customer:</strong> ${order.customer?.name || 'Guest'}</p>
+      <p><strong>Total:</strong> ₹${order.total}</p>
+      <p><strong>Items:</strong> ${order.items?.length || 0} items</p>
+      <p><a href="${process.env.ADMIN_URL || 'https://loopstore.in/admin'}">View Order</a></p>
+    `;
+    return this.sendEmail(adminEmail, subject, html);
+  }
+}
+
+const notificationService = new NotificationService();
+
 // ============ TEST ROUTE ============
 app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
@@ -161,6 +222,9 @@ app.use('/uploads', express.static('uploads'));
 
 //Category Routes
 app.use('/api/categories', categoryRoutes);
+
+// ============ CART ROUTES (NEW) ============
+app.use('/api/cart', authMiddleware, cartRoutes);
 
 // ============ PRODUCT ROUTES ============
 
@@ -568,7 +632,6 @@ app.post('/api/auth/signup', async (req, res) => {
   try {
     const { name, email, phone, password, gender, dob, avatar } = req.body;
     
-    // Validate required fields
     if (!name || !email || !phone || !password) {
       return res.status(400).json({ error: 'Name, email, phone, and password are required' });
     }
@@ -591,10 +654,8 @@ app.post('/api/auth/signup', async (req, res) => {
       });
     }
     
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Create user
     const user = new User({
       name,
       email,
@@ -610,7 +671,6 @@ app.post('/api/auth/signup', async (req, res) => {
     
     await user.save();
     
-    // Generate token
     const token = jwt.sign(
       { userId: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -653,7 +713,6 @@ app.post('/api/auth/login', async (req, res) => {
     
     let user = null;
     
-    // Check if login is by phone or email
     if (phone) {
       const cleanPhone = phone.replace(/\D/g, '');
       user = await User.findOne({ phone: cleanPhone });
@@ -768,7 +827,7 @@ app.post('/api/auth/phone-login', async (req, res) => {
   }
 });
 
-// ✅ UPDATE PROFILE (Add gender, dob, avatar)
+// ✅ UPDATE PROFILE
 app.put('/api/auth/profile', authMiddleware, async (req, res) => {
   try {
     const { gender, dob, avatar, name, phone } = req.body;
@@ -785,7 +844,6 @@ app.put('/api/auth/profile', authMiddleware, async (req, res) => {
     if (name !== undefined) user.name = name;
     if (phone !== undefined) user.phone = phone;
     
-    // Mark profile as complete if gender or dob is provided
     if (gender || dob) {
       user.isProfileComplete = true;
     }
@@ -829,7 +887,7 @@ app.get('/api/auth/profile', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ GET USER (for App.js)
+// ✅ GET USER
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     if (!req.userId) {
@@ -1439,46 +1497,56 @@ app.post('/api/orders/notify-verification-failed', authMiddleware, async (req, r
 });
 
 // ============================================
-// ✅ ORDER CREATION ROUTE WITH PINCODE VALIDATION & FREE SHIPPING
+// ✅ ORDER CREATION ROUTE (FIXED - Links to User)
 // ============================================
 
 app.post('/api/orders', authMiddleware, async (req, res) => {
   try {
     const { customer, items, subtotal, shipping, discount, couponCode, total } = req.body;
     
+    // ✅ Get userId from authenticated user
+    const userId = req.userId;
+    
+    // ✅ If user is logged in, verify user exists
+    if (userId) {
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found. Please login again.' });
+      }
+      console.log('✅ Order being placed for user:', user.email);
+    }
+
+    // Calculate shipping
     let calculatedShipping = 60;
     if (subtotal >= 499) {
       calculatedShipping = 0;
     }
-    
     const finalShipping = shipping !== undefined ? shipping : calculatedShipping;
-    
+
+    // Validate pincode
     if (customer?.address?.pincode) {
       const pincode = customer.address.pincode;
       const validation = await validatePincode(pincode);
-      
       if (!validation.valid) {
         return res.status(400).json({ 
           error: validation.message,
           field: 'pincode'
         });
       }
-      
       if (validation.city && validation.state) {
         customer.address.city = validation.city;
         customer.address.state = validation.state;
-        console.log(`✅ Auto-corrected address: ${customer.address.city}, ${customer.address.state}`);
       }
     }
-    
-    const userId = req.userId || null;
+
+    // ✅ Create order with userId
     const orderCount = await Order.countDocuments();
     const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
     
     const orderData = {
       orderId,
       customer,
-      userId,
+      userId: userId,  // ✅ Link order to user
       items,
       subtotal,
       shipping: finalShipping,
@@ -1501,15 +1569,20 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     if (userId) {
       await User.findByIdAndUpdate(userId, {
         $push: { orderIds: order._id },
-        $inc: { totalSpent: total }
+        $inc: { totalSpent: order.total }
       });
+      console.log('✅ Order linked to user:', orderId);
     }
     
+    // Update product totalSold
     for (const item of items) {
       await Product.findByIdAndUpdate(item.productId, {
         $inc: { totalSold: item.quantity }
       });
     }
+    
+    // Send email notification
+    await notificationService.notifyNewOrder(order);
     
     res.status(201).json(order);
   } catch (err) {
@@ -1782,6 +1855,87 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
 // ============================================
 // END ORDER MANAGEMENT ROUTES
 // ============================================
+
+// ============================================
+// ✅ PDF INVOICE GENERATOR (Helper)
+// ============================================
+
+const generateInvoice = (order) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const PDFDocument = require('pdfkit');
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks = [];
+
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+      doc.fontSize(24).fillColor('#D4AF37').text('LOOP', { align: 'center' });
+      doc.fontSize(14).fillColor('#888').text('Make your move', { align: 'center' }).moveDown();
+      doc.fontSize(20).fillColor('#000').text('INVOICE', { align: 'center' }).moveDown();
+
+      doc.fontSize(12).fillColor('#333');
+      doc.text(`Order ID: ${order.orderId}`, { continued: true })
+         .text(`Date: ${new Date(order.createdAt).toLocaleDateString()}`, { align: 'right' });
+      doc.moveDown();
+
+      doc.fontSize(14).fillColor('#D4AF37').text('Customer Details');
+      doc.fontSize(12).fillColor('#333');
+      doc.text(`Name: ${order.customer?.name || 'Guest'}`);
+      doc.text(`Email: ${order.customer?.email || 'N/A'}`);
+      doc.text(`Phone: ${order.customer?.phone || 'N/A'}`);
+      doc.moveDown();
+
+      doc.fontSize(14).fillColor('#D4AF37').text('Shipping Address');
+      doc.fontSize(12).fillColor('#333');
+      const addr = order.customer?.address;
+      if (addr) {
+        doc.text(`${addr.street || ''}`);
+        doc.text(`${addr.city || ''}, ${addr.state || ''} - ${addr.pincode || ''}`);
+        if (addr.landmark) doc.text(`Landmark: ${addr.landmark}`);
+      }
+      doc.moveDown();
+
+      doc.fontSize(14).fillColor('#D4AF37').text('Items Ordered');
+      doc.fontSize(12).fillColor('#333');
+
+      const tableTop = doc.y;
+      doc.text('Item', 50, tableTop, { width: 200 });
+      doc.text('Qty', 300, tableTop, { width: 50, align: 'center' });
+      doc.text('Price', 400, tableTop, { width: 80, align: 'right' });
+      doc.text('Total', 500, tableTop, { width: 80, align: 'right' });
+      doc.moveDown();
+
+      order.items.forEach((item) => {
+        const y = doc.y;
+        doc.text(item.name, 50, y, { width: 200 });
+        doc.text(String(item.quantity), 300, y, { width: 50, align: 'center' });
+        doc.text(`₹${item.price}`, 400, y, { width: 80, align: 'right' });
+        doc.text(`₹${item.price * item.quantity}`, 500, y, { width: 80, align: 'right' });
+        doc.moveDown();
+      });
+
+      doc.moveDown();
+      const totalY = doc.y;
+      doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
+      doc.text(`Shipping: ₹${order.shipping}`, 400, doc.y + 20, { align: 'right' });
+      if (order.discount > 0) {
+        doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
+      }
+      doc.fontSize(16).fillColor('#D4AF37')
+         .text(`Total: ₹${order.total}`, 400, doc.y + 20, { align: 'right' });
+
+      doc.moveDown(2);
+      doc.fontSize(10).fillColor('#888')
+         .text('Thank you for shopping with LOOP!', { align: 'center' })
+         .text('For support: support@loopstore.in | +91 98765 43210', { align: 'center' });
+
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
 
 const PORT = process.env.PORT || 5002;
 app.listen(PORT, () => {
