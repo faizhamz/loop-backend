@@ -1,44 +1,12 @@
 const express = require('express');
-const mongoose = require('mongoose');  // ✅ ADD THIS
+const mongoose = require('mongoose');
 const router = express.Router();
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
 
 // ============================================
-// PUBLIC ROUTES
-// ============================================
-
-// Get all orders (admin)
-router.get('/', async (req, res) => {
-  try {
-    const orders = await Order.find().sort({ createdAt: -1 });
-    res.json(orders);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get single order by ID (admin)
-router.get('/:id', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    
-    // ✅ Check if it's a valid ObjectId
-    if (!mongoose.Types.ObjectId.isValid(orderId)) {
-      return res.status(400).json({ error: 'Invalid order ID format' });
-    }
-    
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json(order);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================
-// AUTHENTICATED USER ROUTES
+// ✅ SPECIFIC ROUTES FIRST (BEFORE /:id)
 // ============================================
 
 // Get user's order history
@@ -75,7 +43,7 @@ router.get('/order/:orderId', async (req, res) => {
   }
 });
 
-// Get single order with details
+// Get single order with details (user)
 router.get('/my-orders/:orderId', async (req, res) => {
   try {
     const userId = req.userId;
@@ -88,77 +56,6 @@ router.get('/my-orders/:orderId', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     res.json(order);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Create new order
-router.post('/', async (req, res) => {
-  try {
-    const orderCount = await Order.countDocuments();
-    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
-    
-    const userId = req.userId || null;
-    const orderData = { ...req.body, orderId };
-    if (userId) {
-      orderData.userId = userId;
-    }
-    
-    const order = new Order(orderData);
-    await order.save();
-    
-    if (userId) {
-      await User.findByIdAndUpdate(userId, {
-        $push: { orderIds: order._id },
-        $inc: { totalSpent: order.total }
-      });
-    }
-    
-    for (const item of order.items) {
-      await Product.findByIdAndUpdate(item.productId, {
-        $inc: { totalSold: item.quantity }
-      });
-    }
-    
-    res.status(201).json(order);
-  } catch (err) {
-    console.error('Order creation error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Update order status (admin)
-router.put('/:id', async (req, res) => {
-  try {
-    // Check if user is admin
-    const user = await User.findById(req.userId);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-    
-    const order = await Order.findByIdAndUpdate(
-      req.params.id, 
-      { status: req.body.status },
-      { new: true }
-    );
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-    res.json(order);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Delete order (admin)
-router.delete('/:id', async (req, res) => {
-  try {
-    const user = await User.findById(req.userId);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-    
-    await Order.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Order deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -244,6 +141,124 @@ router.post('/:orderId/cancel', async (req, res) => {
   }
 });
 
+// Get order timeline
+router.get('/:orderId/timeline', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.userId;
+    
+    const order = await Order.findOne({ orderId, userId });
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    res.json(order.timeline || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// ✅ PARAMETER ROUTES LAST (AFTER SPECIFIC ROUTES)
+// ============================================
+
+// Get all orders (admin)
+router.get('/', async (req, res) => {
+  try {
+    const orders = await Order.find().sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get single order by ID (admin) - MUST BE LAST
+router.get('/:id', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ error: 'Invalid order ID format' });
+    }
+    
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create new order
+router.post('/', async (req, res) => {
+  try {
+    const orderCount = await Order.countDocuments();
+    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
+    
+    const userId = req.userId || null;
+    const orderData = { ...req.body, orderId };
+    if (userId) {
+      orderData.userId = userId;
+    }
+    
+    const order = new Order(orderData);
+    await order.save();
+    
+    if (userId) {
+      await User.findByIdAndUpdate(userId, {
+        $push: { orderIds: order._id },
+        $inc: { totalSpent: order.total }
+      });
+    }
+    
+    for (const item of order.items) {
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { totalSold: item.quantity }
+      });
+    }
+    
+    res.status(201).json(order);
+  } catch (err) {
+    console.error('Order creation error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update order status (admin)
+router.put('/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const order = await Order.findByIdAndUpdate(
+      req.params.id, 
+      { status: req.body.status },
+      { new: true }
+    );
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    res.json(order);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete order (admin)
+router.delete('/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    await Order.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Order deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Update order status with timeline (admin)
 router.put('/admin/:id/status', async (req, res) => {
   try {
@@ -280,24 +295,7 @@ router.put('/admin/:id/status', async (req, res) => {
   }
 });
 
-// Get order timeline
-router.get('/:orderId/timeline', async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const userId = req.userId;
-    
-    const order = await Order.findOne({ orderId, userId });
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-    
-    res.json(order.timeline || []);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ Add tracking to order (admin)
+// Add tracking to order (admin)
 router.post('/:id/tracking', async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -349,7 +347,6 @@ router.get('/:id/invoice', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // For now, return order data. Full PDF generation can be added later.
     res.json({
       message: 'Invoice data',
       orderId: order.orderId,
