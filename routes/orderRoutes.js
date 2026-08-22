@@ -19,11 +19,13 @@ router.get('/my-orders', async (req, res) => {
     console.log('📦 Fetching orders for user:', userId);
     
     const orders = await Order.find({ userId })
-      .sort({ createdAt: -1 })
-      .select('-paymentMethod -couponCode');
-    
-    console.log('📦 Orders found:', orders.length);
-    res.json(orders);
+  .sort({ createdAt: -1 })
+  .populate('items.productId', 'name image productId')
+  .select('-paymentMethod -couponCode');  
+
+console.log('📦 Orders found:', orders.length);
+res.json(orders);
+
   } catch (err) {
     console.error('Error fetching user orders:', err);
     res.status(500).json({ error: err.message });
