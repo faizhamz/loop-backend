@@ -20,7 +20,13 @@ const userSchema = new mongoose.Schema({
   phone: { type: String, unique: true, sparse: true },
   phoneVerified: { type: Boolean, default: false },
   password: { type: String, required: true },
+  
+  // ✅ NEW PROFILE FIELDS
   avatar: { type: String, default: '' },
+  gender: { type: String, enum: ['Male', 'Female', 'Other', ''], default: '' },
+  dob: { type: Date, default: null },
+  isProfileComplete: { type: Boolean, default: false },
+  
   emailVerified: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
@@ -60,7 +66,7 @@ const userSchema = new mongoose.Schema({
   // Reviews
   reviewIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Review' }],
   
-  // ✅ REFERRAL FIELDS
+  // Referral
   referralCode: { type: String, unique: true, sparse: true },
   referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   referrals: [{
@@ -88,14 +94,12 @@ const userSchema = new mongoose.Schema({
 userSchema.pre('save', async function(next) {
   this.updatedAt = new Date();
   
-  // Generate refId if not exists
   if (!this.refId) {
     const count = await mongoose.model('User').countDocuments();
     const namePart = this.name ? this.name.substring(0, 4).toUpperCase() : 'USER';
     this.refId = `LOOP-${namePart}-${String(count + 1).padStart(3, '0')}`;
   }
   
-  // ✅ Generate referral code if not exists
   if (!this.referralCode) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';

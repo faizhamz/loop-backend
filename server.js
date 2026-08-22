@@ -128,146 +128,6 @@ const validatePincode = async (pincode) => {
   }
 };
 
-// ============ NOTIFICATION SERVICE ============
-class NotificationService {
-  constructor() {
-    this.transporter = null;
-    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-      try {
-        const nodemailer = require('nodemailer');
-        this.transporter = nodemailer.createTransport({
-          service: 'gmail',
-          auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS
-          }
-        });
-        console.log('✅ Email service initialized');
-      } catch (e) {
-        console.log('⚠️ Email service not configured');
-      }
-    }
-  }
-
-  async sendEmail(to, subject, html) {
-    if (!this.transporter) {
-      console.log('📧 Email would be sent:', { to, subject });
-      return null;
-    }
-    try {
-      const info = await this.transporter.sendMail({
-        from: `"LOOP Store" <${process.env.EMAIL_USER}>`,
-        to,
-        subject,
-        html
-      });
-      console.log('📧 Email sent:', info.messageId);
-      return info;
-    } catch (error) {
-      console.error('Email error:', error);
-      return null;
-    }
-  }
-
-  async notifyNewOrder(order) {
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@loopstore.in';
-    const subject = `🛍️ New Order #${order.orderId}`;
-    const html = `
-      <h2>New Order Received! 🎉</h2>
-      <p><strong>Order ID:</strong> ${order.orderId}</p>
-      <p><strong>Customer:</strong> ${order.customer?.name || 'Guest'}</p>
-      <p><strong>Total:</strong> ₹${order.total}</p>
-      <p><strong>Items:</strong> ${order.items?.length || 0} items</p>
-      <p><a href="${process.env.ADMIN_URL || 'https://loopstore.in/admin'}">View Order</a></p>
-    `;
-    return this.sendEmail(adminEmail, subject, html);
-  }
-}
-
-const notificationService = new NotificationService();
-
-// ============ PDF INVOICE GENERATOR ============
-const generateInvoice = (order) => {
-  return new Promise((resolve, reject) => {
-    try {
-      const PDFDocument = require('pdfkit');
-      const doc = new PDFDocument({ margin: 50 });
-      const chunks = [];
-
-      doc.on('data', chunk => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-
-      doc.fontSize(24).fillColor('#D4AF37').text('LOOP', { align: 'center' });
-      doc.fontSize(14).fillColor('#888').text('Make your move', { align: 'center' }).moveDown();
-      doc.fontSize(20).fillColor('#000').text('INVOICE', { align: 'center' }).moveDown();
-
-      doc.fontSize(12).fillColor('#333');
-      doc.text(`Order ID: ${order.orderId}`, { continued: true })
-         .text(`Date: ${new Date(order.createdAt).toLocaleDateString()}`, { align: 'right' });
-      doc.moveDown();
-
-      doc.fontSize(14).fillColor('#D4AF37').text('Customer Details');
-      doc.fontSize(12).fillColor('#333');
-      doc.text(`Name: ${order.customer?.name || 'Guest'}`);
-      doc.text(`Email: ${order.customer?.email || 'N/A'}`);
-      doc.text(`Phone: ${order.customer?.phone || 'N/A'}`);
-      doc.moveDown();
-
-      doc.fontSize(14).fillColor('#D4AF37').text('Shipping Address');
-      doc.fontSize(12).fillColor('#333');
-      const addr = order.customer?.address;
-      if (addr) {
-        doc.text(`${addr.street || ''}`);
-        doc.text(`${addr.city || ''}, ${addr.state || ''} - ${addr.pincode || ''}`);
-        if (addr.landmark) doc.text(`Landmark: ${addr.landmark}`);
-      }
-      doc.moveDown();
-
-      doc.fontSize(14).fillColor('#D4AF37').text('Items Ordered');
-      doc.fontSize(12).fillColor('#333');
-
-      const tableTop = doc.y;
-      doc.text('Item', 50, tableTop, { width: 200 });
-      doc.text('Qty', 300, tableTop, { width: 50, align: 'center' });
-      doc.text('Price', 400, tableTop, { width: 80, align: 'right' });
-      doc.text('Total', 500, tableTop, { width: 80, align: 'right' });
-      doc.moveDown();
-
-      order.items.forEach((item) => {
-        const y = doc.y;
-        doc.text(item.name, 50, y, { width: 200 });
-        doc.text(String(item.quantity), 300, y, { width: 50, align: 'center' });
-        doc.text(`₹${item.price}`, 400, y, { width: 80, align: 'right' });
-        doc.text(`₹${item.price * item.quantity}`, 500, y, { width: 80, align: 'right' });
-        doc.moveDown();
-      });
-
-      doc.moveDown();
-      const totalY = doc.y;
-      doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
-      
-      // ✅ FREE SHIPPING INDICATOR
-      const shippingText = order.shipping === 0 ? 'FREE' : `₹${order.shipping}`;
-      doc.text(`Shipping: ${shippingText}`, 400, doc.y + 20, { align: 'right' });
-      
-      if (order.discount > 0) {
-        doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
-      }
-      doc.fontSize(16).fillColor('#D4AF37')
-         .text(`Total: ₹${order.total}`, 400, doc.y + 20, { align: 'right' });
-
-      doc.moveDown(2);
-      doc.fontSize(10).fillColor('#888')
-         .text('Thank you for shopping with LOOP!', { align: 'center' })
-         .text('For support: support@loopstore.in | +91 98765 43210', { align: 'center' });
-
-      doc.end();
-    } catch (error) {
-      reject(error);
-    }
-  });
-};
-
 // ============ TEST ROUTE ============
 app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
@@ -678,85 +538,86 @@ app.post('/api/users/:id/wallet', async (req, res) => {
 
 // ============ AUTH ROUTES ============
 
-app.post('/api/auth/signup', async (req, res) => {
+// ✅ DUPLICATE CHECK ROUTE
+app.post('/api/auth/check-duplicate', async (req, res) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { email, phone } = req.body;
     
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ error: 'Email already registered' });
-    }
-    
-    if (phone) {
-      const existingPhone = await User.findOne({ phone });
-      if (existingPhone) {
-        return res.status(400).json({ error: 'Phone number already registered' });
+    if (email) {
+      const user = await User.findOne({ email });
+      if (user) {
+        return res.json({ exists: true, field: 'email' });
       }
     }
     
+    if (phone) {
+      const user = await User.findOne({ phone });
+      if (user) {
+        return res.json({ exists: true, field: 'phone' });
+      }
+    }
+    
+    res.json({ exists: false });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ SIGNUP
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { name, email, phone, password, gender, dob, avatar } = req.body;
+    
+    // Validate required fields
+    if (!name || !email || !phone || !password) {
+      return res.status(400).json({ error: 'Name, email, phone, and password are required' });
+    }
+    
+    // Check email duplicate
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+      return res.status(400).json({ 
+        error: 'This email is already registered. Please login instead.',
+        field: 'email'
+      });
+    }
+    
+    // Check phone duplicate
+    const existingPhone = await User.findOne({ phone });
+    if (existingPhone) {
+      return res.status(400).json({ 
+        error: 'This phone number is already registered. Please login instead.',
+        field: 'phone'
+      });
+    }
+    
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ 
-      name, 
-      email, 
-      phone: phone || '', 
-      password: hashedPassword, 
-      emailVerified: true, 
-      isActive: true 
+    
+    // Create user
+    const user = new User({
+      name,
+      email,
+      phone,
+      password: hashedPassword,
+      gender: gender || '',
+      dob: dob || null,
+      avatar: avatar || '',
+      phoneVerified: true,
+      emailVerified: true,
+      isActive: true
     });
+    
     await user.save();
     
+    // Generate token
     const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role }, 
-      process.env.JWT_SECRET, 
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
       { expiresIn: '30d' }
     );
     
     res.status(201).json({
-      token,
-      user: { 
-        id: user._id, 
-        name: user.name, 
-        email: user.email,
-        phone: user.phone,
-        refId: user.refId,
-        referralCode: user.referralCode,
-        role: user.role 
-      }
-    });
-  } catch (err) {
-    console.error('Signup error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-    
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-    
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-    
-    user.lastLogin = new Date();
-    await user.save();
-    
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '30d' }
-    );
-    
-    res.json({
       token,
       user: {
         id: user._id,
@@ -766,42 +627,51 @@ app.post('/api/auth/login', async (req, res) => {
         refId: user.refId,
         referralCode: user.referralCode,
         role: user.role,
-        walletBalance: user.wallet?.balance || 0
+        gender: user.gender,
+        dob: user.dob,
+        avatar: user.avatar,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || [],
+        isProfileComplete: user.isProfileComplete || false
       }
     });
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('Signup error:', err);
     res.status(400).json({ error: err.message });
   }
 });
 
-app.post('/api/auth/phone-login', async (req, res) => {
+// ✅ LOGIN (Email or Phone + Password - No OTP)
+app.post('/api/auth/login', async (req, res) => {
   try {
-    const { phone, uid } = req.body;
+    const { email, phone, password } = req.body;
     
-    if (!phone) {
-      return res.status(400).json({ error: 'Phone number is required' });
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
     }
     
-    let user = await User.findOne({ phone });
+    let user = null;
+    
+    // Check if login is by phone or email
+    if (phone) {
+      const cleanPhone = phone.replace(/\D/g, '');
+      user = await User.findOne({ phone: cleanPhone });
+    } else if (email) {
+      user = await User.findOne({ email });
+    } else {
+      return res.status(400).json({ error: 'Email or phone is required' });
+    }
     
     if (!user) {
-      const randomPassword = Math.random().toString(36).slice(-8);
-      const hashedPassword = await bcrypt.hash(randomPassword, 10);
-      
-      user = new User({
-        name: `User_${phone.slice(-4)}`,
-        email: `${phone.replace(/[^0-9]/g, '')}@phone.loop.in`,
-        phone: phone,
-        password: hashedPassword,
-        phoneVerified: true,
-        emailVerified: true,
-        isActive: true
-      });
-      await user.save();
+      return res.status(401).json({ error: 'Account not found. Please sign up first.' });
     }
     
-    user.phoneVerified = true;
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+    
     user.lastLogin = new Date();
     await user.save();
     
@@ -821,12 +691,158 @@ app.post('/api/auth/phone-login', async (req, res) => {
         refId: user.refId,
         referralCode: user.referralCode,
         role: user.role,
-        walletBalance: user.wallet?.balance || 0
+        gender: user.gender,
+        dob: user.dob,
+        avatar: user.avatar,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || [],
+        isProfileComplete: user.isProfileComplete || false
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ✅ PHONE LOGIN (Legacy - kept for compatibility)
+app.post('/api/auth/phone-login', async (req, res) => {
+  try {
+    const { phone, uid } = req.body;
+    
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+    
+    let user = await User.findOne({ phone });
+    
+    if (!user) {
+      const randomPassword = Math.random().toString(36).slice(-8);
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+      const email = `user_${phone.replace(/[^0-9]/g, '')}@phone.loop.in`;
+      
+      user = new User({
+        name: `User_${phone.slice(-4)}`,
+        email: email,
+        phone: phone,
+        password: hashedPassword,
+        phoneVerified: true,
+        emailVerified: true,
+        isActive: true,
+        addresses: [],
+        orderIds: [],
+        reviewIds: []
+      });
+      await user.save();
+      console.log('✅ New user created from phone:', user._id);
+    }
+    
+    user.lastLogin = new Date();
+    await user.save();
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || []
       }
     });
   } catch (err) {
     console.error('Phone login error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ UPDATE PROFILE (Add gender, dob, avatar)
+app.put('/api/auth/profile', authMiddleware, async (req, res) => {
+  try {
+    const { gender, dob, avatar, name, phone } = req.body;
+    const userId = req.userId;
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (gender !== undefined) user.gender = gender;
+    if (dob !== undefined) user.dob = dob;
+    if (avatar !== undefined) user.avatar = avatar;
+    if (name !== undefined) user.name = name;
+    if (phone !== undefined) user.phone = phone;
+    
+    // Mark profile as complete if gender or dob is provided
+    if (gender || dob) {
+      user.isProfileComplete = true;
+    }
+    
+    await user.save();
+    
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role,
+        gender: user.gender,
+        dob: user.dob,
+        avatar: user.avatar,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || [],
+        isProfileComplete: user.isProfileComplete || false
+      }
+    });
+  } catch (err) {
+    console.error('Profile update error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ✅ GET PROFILE
+app.get('/api/auth/profile', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ GET USER (for App.js)
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const user = await User.findById(req.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (err) {
+    console.error('Get me error:', err);
+    res.status(401).json({ error: 'Invalid token' });
   }
 });
 
@@ -844,22 +860,6 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   } catch (err) {
     console.error('Forgot password error:', err);
     res.status(400).json({ error: err.message });
-  }
-});
-
-app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  try {
-    if (!req.userId) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-    const user = await User.findById(req.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json(user);
-  } catch (err) {
-    console.error('Get me error:', err);
-    res.status(401).json({ error: 'Invalid token' });
   }
 });
 
@@ -1229,7 +1229,6 @@ app.delete('/api/payment-methods/:id', async (req, res) => {
 // ✅ RAZORPAY PAYMENT ROUTES
 // ============================================
 
-// ✅ Create Razorpay Order
 app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
   try {
     if (!razorpay) {
@@ -1253,7 +1252,6 @@ app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ Verify Razorpay Payment
 app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
   try {
     const { razorpay_payment_id, razorpay_order_id, razorpay_signature, orderId } = req.body;
@@ -1309,7 +1307,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ Razorpay Webhook (Auto-confirm payments)
 app.post('/api/razorpay-webhook', async (req, res) => {
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
@@ -1449,13 +1446,11 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
   try {
     const { customer, items, subtotal, shipping, discount, couponCode, total } = req.body;
     
-    // ✅ FREE SHIPPING: Calculate shipping based on subtotal
-    let calculatedShipping = 60; // default shipping
+    let calculatedShipping = 60;
     if (subtotal >= 499) {
-      calculatedShipping = 0; // Free shipping above ₹499
+      calculatedShipping = 0;
     }
     
-    // Use calculated shipping if not manually set
     const finalShipping = shipping !== undefined ? shipping : calculatedShipping;
     
     if (customer?.address?.pincode) {
@@ -1502,8 +1497,7 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     const order = new Order(orderData);
     await order.save();
     
-    await notificationService.notifyNewOrder(order);
-    
+    // ✅ Update user's order list
     if (userId) {
       await User.findByIdAndUpdate(userId, {
         $push: { orderIds: order._id },
@@ -1528,7 +1522,6 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
 // ✅ AUTO-CLEANUP PENDING ORDERS
 // ============================================
 
-// Auto-cancel pending orders older than 30 minutes
 app.post('/api/admin/cleanup-pending-orders', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
@@ -1563,7 +1556,6 @@ app.post('/api/admin/cleanup-pending-orders', authMiddleware, adminMiddleware, a
   }
 });
 
-// Get cleanup stats
 app.get('/api/admin/cleanup-stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
