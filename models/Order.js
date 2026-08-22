@@ -27,11 +27,19 @@ const orderSchema = new mongoose.Schema({
   },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   items: [orderItemSchema],
-  subtotal: { type: Number, required: true },
+  
+  // ===== ORDER BREAKDOWN =====
+  subtotal: { type: Number, required: true, default: 0 },
   shipping: { type: Number, default: 60 },
+  platformFee: { type: Number, default: 20 },
+  gstPercent: { type: Number, default: 12 },
+  gstAmount: { type: Number, default: 0 },
+  handlingFee: { type: Number, default: 10 },
   discount: { type: Number, default: 0 },
   couponCode: { type: String, default: '' },
+  couponDiscount: { type: Number, default: 0 },
   total: { type: Number, required: true },
+  
   paymentMethod: { type: String, enum: ['upi', 'razorpay'], default: 'upi' },
   paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
   status: { 
@@ -40,7 +48,7 @@ const orderSchema = new mongoose.Schema({
     default: 'pending' 
   },
   
-  // ✅ Tracking Information
+  // Tracking Information
   tracking: {
     number: { type: String, default: '' },
     courier: { type: String, enum: ['delhivery', 'bluedart', 'dtdc', 'xpressbees', 'other', ''], default: '' },
@@ -49,7 +57,7 @@ const orderSchema = new mongoose.Schema({
     updatedAt: { type: Date, default: null }
   },
   
-  // ✅ Payment Details (for Razorpay)
+  // Payment Details
   paymentDetails: {
     razorpay_payment_id: { type: String, default: '' },
     razorpay_order_id: { type: String, default: '' },
@@ -89,7 +97,7 @@ orderSchema.pre('save', function(next) {
   next();
 });
 
-// ✅ Method to update status with timeline
+// Method to update status with timeline
 orderSchema.methods.updateStatus = function(newStatus, description = '') {
   const validTransitions = {
     'pending': ['processing', 'cancelled'],
@@ -121,5 +129,4 @@ orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ paymentStatus: 1 });
 
-// ✅ Prevent model overwrite error
 module.exports = mongoose.models.Order || mongoose.model('Order', orderSchema);

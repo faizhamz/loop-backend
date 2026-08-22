@@ -702,7 +702,7 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// ✅ LOGIN (Email or Phone + Password - No OTP)
+// ✅ LOGIN (Email or Phone + Password)
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, phone, password } = req.body;
@@ -765,7 +765,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ✅ PHONE LOGIN (Legacy - kept for compatibility)
+// ✅ PHONE LOGIN (Legacy)
 app.post('/api/auth/phone-login', async (req, res) => {
   try {
     const { phone, uid } = req.body;
@@ -830,7 +830,7 @@ app.post('/api/auth/phone-login', async (req, res) => {
 // ✅ UPDATE PROFILE
 app.put('/api/auth/profile', authMiddleware, async (req, res) => {
   try {
-    const { gender, dob, avatar, name, phone } = req.body;
+    const { gender, dob, avatar, name, phone, avatarBg } = req.body;
     const userId = req.userId;
     
     const user = await User.findById(userId);
@@ -841,6 +841,7 @@ app.put('/api/auth/profile', authMiddleware, async (req, res) => {
     if (gender !== undefined) user.gender = gender;
     if (dob !== undefined) user.dob = dob;
     if (avatar !== undefined) user.avatar = avatar;
+    if (avatarBg !== undefined) user.avatarBg = avatarBg;
     if (name !== undefined) user.name = name;
     if (phone !== undefined) user.phone = phone;
     
@@ -862,6 +863,7 @@ app.put('/api/auth/profile', authMiddleware, async (req, res) => {
         gender: user.gender,
         dob: user.dob,
         avatar: user.avatar,
+        avatarBg: user.avatarBg,
         wallet: user.wallet || { balance: 0, transactions: [] },
         addresses: user.addresses || [],
         orderIds: user.orderIds || [],
@@ -1311,7 +1313,7 @@ app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ VERIFY RAZORPAY PAYMENT (Fixed - Strong verification)
+// ✅ VERIFY RAZORPAY PAYMENT
 app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
   try {
     const { razorpay_payment_id, razorpay_order_id, razorpay_signature, orderId } = req.body;
@@ -1322,15 +1324,11 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
       orderId
     });
     
-    // ✅ CRITICAL: Verify payment signature
     const body = razorpay_order_id + '|' + razorpay_payment_id;
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
       .update(body.toString())
       .digest('hex');
-    
-    console.log('🔐 Expected signature:', expectedSignature);
-    console.log('🔐 Received signature:', razorpay_signature);
     
     if (expectedSignature !== razorpay_signature) {
       console.error('❌ Invalid payment signature!');
@@ -1340,7 +1338,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
       });
     }
     
-    // ✅ Check if order exists
     const order = await Order.findOne({ orderId });
     if (!order) {
       console.error('❌ Order not found:', orderId);
@@ -1350,7 +1347,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
       });
     }
     
-    // ✅ Check if already paid
     if (order.paymentStatus === 'paid') {
       console.log('ℹ️ Order already marked as paid:', orderId);
       return res.json({ 
@@ -1360,7 +1356,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
       });
     }
     
-    // ✅ Verify with Razorpay API (Double-check)
     try {
       const axios = require('axios');
       const paymentDetails = await axios.get(
@@ -1373,8 +1368,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
         }
       );
       
-      console.log('🔍 Razorpay payment details:', paymentDetails.data);
-      
       if (paymentDetails.data.status !== 'captured') {
         console.error('❌ Payment not captured:', paymentDetails.data.status);
         return res.status(400).json({
@@ -1383,7 +1376,6 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
         });
       }
       
-      // ✅ Payment is verified and captured
       order.paymentStatus = 'paid';
       order.status = 'processing';
       order.paymentMethod = 'razorpay';
@@ -1403,13 +1395,11 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
       await order.save();
       console.log('✅ Payment verified and order updated:', orderId);
       
-      // ✅ Clear cart after successful payment
       if (order.userId) {
         await User.findByIdAndUpdate(order.userId, { cart: [] });
         console.log('✅ Cart cleared for user:', order.userId);
       }
       
-      // Update stock
       for (const item of order.items) {
         const product = await Product.findById(item.productId);
         if (product) {
@@ -1438,13 +1428,12 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ RAZORPAY WEBHOOK (Auto-verify payments)
+// ✅ RAZORPAY WEBHOOK
 app.post('/api/razorpay-webhook', async (req, res) => {
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const signature = req.headers['x-razorpay-signature'];
     
-    // ✅ Verify webhook signature
     const body = JSON.stringify(req.body);
     const expectedSignature = crypto
       .createHmac('sha256', webhookSecret)
@@ -1463,17 +1452,9 @@ app.post('/api/razorpay-webhook', async (req, res) => {
       const payment = payload.payment.entity;
       const orderId = payment.notes?.order_id;
       
-      console.log('💰 Payment captured:', {
-        payment_id: payment.id,
-        order_id: orderId,
-        amount: payment.amount,
-        status: payment.status
-      });
-      
       if (orderId) {
         const order = await Order.findOne({ orderId });
         if (order && order.paymentStatus !== 'paid') {
-          // ✅ Update order
           order.paymentStatus = 'paid';
           order.status = 'processing';
           order.paymentDetails = {
@@ -1489,12 +1470,10 @@ app.post('/api/razorpay-webhook', async (req, res) => {
           });
           await order.save();
           
-          // ✅ Clear cart
           if (order.userId) {
             await User.findByIdAndUpdate(order.userId, { cart: [] });
           }
           
-          // Update stock
           for (const item of order.items) {
             const product = await Product.findById(item.productId);
             if (product) {
@@ -1749,6 +1728,95 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
 });
 
 // ============================================
+// ✅ ORDER CREATION ROUTE (UPDATED WITH BREAKDOWN)
+// ============================================
+
+// Create new order
+router.post('/', async (req, res) => {
+  try {
+    const userId = req.userId || null;
+    const { items, customer, couponCode, couponDiscount = 0, discount = 0 } = req.body;
+    
+    // ✅ Calculate subtotal from items
+    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    // ✅ Fee Configuration (can be moved to database later)
+    const shippingFee = subtotal > 999 ? 0 : 60;  // Free shipping above ₹999
+    const platformFee = 20;                        // Platform fee
+    const gstPercent = 12;                        // GST percentage
+    const gstAmount = Math.round((subtotal + shippingFee + platformFee) * (gstPercent / 100));
+    const handlingFee = 10;                       // Handling fee
+    
+    // ✅ Calculate total
+    const total = subtotal + shippingFee + platformFee + gstAmount + handlingFee - discount - couponDiscount;
+    
+    // ✅ Generate Order ID
+    const orderCount = await Order.countDocuments();
+    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
+    
+    // ✅ Create order with full breakdown
+    const orderData = {
+      orderId,
+      userId,
+      customer: customer || req.body.customer,
+      items: items || req.body.items,
+      
+      // Breakdown fields
+      subtotal,
+      shipping: shippingFee,
+      platformFee,
+      gstPercent,
+      gstAmount,
+      handlingFee,
+      discount,
+      couponCode: couponCode || req.body.couponCode || '',
+      couponDiscount,
+      total,
+      
+      paymentMethod: req.body.paymentMethod || 'upi',
+      paymentStatus: 'pending',
+      status: 'pending',
+      timeline: [{
+        status: 'pending',
+        description: 'Order placed successfully',
+        timestamp: new Date()
+      }]
+    };
+    
+    const order = new Order(orderData);
+    await order.save();
+    
+    // ✅ Update user
+    if (userId) {
+      await User.findByIdAndUpdate(userId, {
+        $push: { orderIds: order._id },
+        $inc: { totalSpent: total }
+      });
+    }
+    
+    // ✅ Update product stock
+    for (const item of order.items) {
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { totalSold: item.quantity }
+      });
+    }
+    
+    // ✅ Send notification (optional)
+    try {
+      await notificationService.notifyNewOrder(order);
+    } catch (err) {
+      console.log('Notification error:', err);
+    }
+    
+    res.status(201).json(order);
+    
+  } catch (err) {
+    console.error('Order creation error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================
 // ✅ PDF INVOICE GENERATOR (Helper)
 // ============================================
 
@@ -1809,11 +1877,22 @@ const generateInvoice = (order) => {
 
       doc.moveDown();
       const totalY = doc.y;
+      
+      // ✅ Show breakdown in invoice
+      doc.fontSize(12).fillColor('#555');
       doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
-      doc.text(`Shipping: ₹${order.shipping}`, 400, doc.y + 20, { align: 'right' });
+      doc.text(`Shipping: ₹${order.shipping || 60}`, 400, doc.y + 20, { align: 'right' });
+      doc.text(`Platform Fee: ₹${order.platformFee || 20}`, 400, doc.y + 20, { align: 'right' });
+      doc.text(`GST (${order.gstPercent || 12}%): ₹${order.gstAmount || 0}`, 400, doc.y + 20, { align: 'right' });
+      doc.text(`Handling Fee: ₹${order.handlingFee || 10}`, 400, doc.y + 20, { align: 'right' });
+      
       if (order.discount > 0) {
         doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
       }
+      if (order.couponDiscount > 0) {
+        doc.text(`Coupon Discount: -₹${order.couponDiscount}`, 400, doc.y + 20, { align: 'right' });
+      }
+      
       doc.fontSize(16).fillColor('#D4AF37')
          .text(`Total: ₹${order.total}`, 400, doc.y + 20, { align: 'right' });
 
