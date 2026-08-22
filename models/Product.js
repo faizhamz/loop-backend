@@ -1,124 +1,80 @@
 const mongoose = require('mongoose');
 
-const orderItemSchema = new mongoose.Schema({
-  productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
-  variantId: { type: mongoose.Schema.Types.ObjectId },
-  name: { type: String, required: true },
-  price: { type: Number, required: true },
-  quantity: { type: Number, required: true, min: 1 },
-  size: { type: String, default: 'M' },
-  color: { type: String, default: 'Black' },
-  isReviewed: { type: Boolean, default: false }
-});
-
-const orderSchema = new mongoose.Schema({
-  orderId: { type: String, unique: true },
-  customer: {
-    name: { type: String, required: true },
-    email: { type: String, required: true },
-    phone: { type: String },
-    address: {
-      street: String,
-      city: String,
-      state: String,
-      pincode: String,
-      landmark: String
+const productSchema = new mongoose.Schema({
+  productId: { 
+    type: String, 
+    unique: true,
+    required: true,
+    default: function() {
+      const timestamp = Date.now().toString().slice(-6);
+      const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+      return `LOOP-${timestamp}${random}`;
     }
   },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  items: [orderItemSchema],
-  subtotal: { type: Number, required: true },
-  shipping: { type: Number, default: 60 },
-  discount: { type: Number, default: 0 },
-  couponCode: { type: String, default: '' },
-  total: { type: Number, required: true },
-  paymentMethod: { type: String, enum: ['upi', 'razorpay'], default: 'upi' },
-  paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
-  status: { 
-    type: String, 
-    enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned'], 
-    default: 'pending' 
-  },
+  name: { type: String, required: true },
+  price: { type: Number, required: true },
+  salePrice: { type: Number, default: null },
+  stock: { type: Number, required: true, default: 0 },
+  image: { type: String, default: '' },
+  images: [{ type: String, default: [] }],
+  videos: [{ type: String, default: [] }],
+  description: { type: String, default: '' },
   
-  // ✅ Tracking Information
-  tracking: {
-    number: { type: String, default: '' },
-    courier: { type: String, enum: ['delhivery', 'bluedart', 'dtdc', 'xpressbees', 'other', ''], default: '' },
-    courierName: { type: String, default: '' },
-    url: { type: String, default: '' },
-    updatedAt: { type: Date, default: null }
-  },
+  // Category as string (main category)
+  category: { type: String, default: 'Uncategorized' },
   
-  // ✅ Payment Details (for Razorpay)
-  paymentDetails: {
-    razorpay_payment_id: { type: String, default: '' },
-    razorpay_order_id: { type: String, default: '' },
-    razorpay_signature: { type: String, default: '' },
-    capturedAt: { type: Date, default: null }
-  },
-  
-  timeline: [{
-    status: String,
-    description: String,
-    timestamp: { type: Date, default: Date.now }
+  // Categories as array of ObjectIds (for multiple categories)
+  categories: [{ 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Category',
+    default: []
   }],
   
-  postOrderRating: { type: Number, min: 1, max: 5 },
-  postOrderComment: { type: String, default: '' },
-  postOrderRatedAt: { type: Date },
+  color: { type: String, default: 'Black' },
+  size: { type: String, default: 'M' },
+  
+  // Variants
+  hasVariants: { type: Boolean, default: false },
+  variants: [{
+    type: { type: String, required: true }, // e.g., "Size", "Color"
+    name: { type: String, required: true },
+    options: [{
+      value: { type: String, required: true },
+      price: { type: Number, default: 0 },
+      stock: { type: Number, default: 0 }
+    }]
+  }],
+  
+  // Ratings
+  avgRating: { type: Number, default: 0 },
+  reviewCount: { type: Number, default: 0 },
+  totalSold: { type: Number, default: 0 },
+  totalViews: { type: Number, default: 0 },
+  
+  // Status
+  isActive: { type: Boolean, default: true },
+  status: { 
+    type: String, 
+    enum: ['active', 'inactive', 'draft'], 
+    default: 'active' 
+  },
   
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
+}, {
+  timestamps: true
 });
 
-// Auto-generate orderId
-orderSchema.pre('save', function(next) {
-  this.updatedAt = new Date();
-  if (!this.orderId) {
-    const date = new Date();
-    const prefix = `LOOP-${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    this.orderId = `${prefix}-${String(Math.floor(100000 + Math.random() * 900000))}`;
-  }
-  if (this.isNew) {
-    this.timeline = [{
-      status: 'pending',
-      description: 'Order placed successfully',
-      timestamp: new Date()
-    }];
-  }
-  next();
+// Add indexes for better performance
+productSchema.index({ productId: 1 }, { unique: true });
+productSchema.index({ category: 1 });
+productSchema.index({ categories: 1 });
+productSchema.index({ name: 'text' });
+
+// Virtual for display price
+productSchema.virtual('displayPrice').get(function() {
+  return this.salePrice && this.salePrice < this.price ? this.salePrice : this.price;
 });
 
-// ✅ Method to update status with timeline
-orderSchema.methods.updateStatus = function(newStatus, description = '') {
-  const validTransitions = {
-    'pending': ['processing', 'cancelled'],
-    'processing': ['shipped', 'cancelled'],
-    'shipped': ['delivered', 'cancelled'],
-    'delivered': ['returned'],
-    'cancelled': [],
-    'returned': []
-  };
-  
-  if (!validTransitions[this.status]?.includes(newStatus)) {
-    throw new Error(`Invalid status transition: ${this.status} → ${newStatus}`);
-  }
-  
-  this.status = newStatus;
-  this.timeline.push({
-    status: newStatus,
-    description: description || `Order ${newStatus}`,
-    timestamp: new Date()
-  });
-  
-  return this.save();
-};
-
-// Indexes
-orderSchema.index({ orderId: 1 }, { unique: true });
-orderSchema.index({ userId: 1 });
-orderSchema.index({ createdAt: -1 });
-orderSchema.index({ status: 1 });
-orderSchema.index({ paymentStatus: 1 });
-
-module.exports = mongoose.model('Order', orderSchema);
+// Ensure we don't overwrite the model
+module.exports = mongoose.models.Product || mongoose.model('Product', productSchema);

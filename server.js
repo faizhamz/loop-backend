@@ -245,7 +245,11 @@ const generateInvoice = (order) => {
       doc.moveDown();
       const totalY = doc.y;
       doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
-      doc.text(`Shipping: ₹${order.shipping || 0}`, 400, doc.y + 20, { align: 'right' });
+      
+      // ✅ FREE SHIPPING INDICATOR
+      const shippingText = order.shipping === 0 ? 'FREE' : `₹${order.shipping}`;
+      doc.text(`Shipping: ${shippingText}`, 400, doc.y + 20, { align: 'right' });
+      
       if (order.discount > 0) {
         doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
       }
@@ -1438,12 +1442,21 @@ app.post('/api/orders/notify-verification-failed', authMiddleware, async (req, r
 });
 
 // ============================================
-// ✅ ORDER CREATION ROUTE WITH PINCODE VALIDATION
+// ✅ ORDER CREATION ROUTE WITH PINCODE VALIDATION & FREE SHIPPING
 // ============================================
 
 app.post('/api/orders', authMiddleware, async (req, res) => {
   try {
     const { customer, items, subtotal, shipping, discount, couponCode, total } = req.body;
+    
+    // ✅ FREE SHIPPING: Calculate shipping based on subtotal
+    let calculatedShipping = 60; // default shipping
+    if (subtotal >= 499) {
+      calculatedShipping = 0; // Free shipping above ₹499
+    }
+    
+    // Use calculated shipping if not manually set
+    const finalShipping = shipping !== undefined ? shipping : calculatedShipping;
     
     if (customer?.address?.pincode) {
       const pincode = customer.address.pincode;
@@ -1473,10 +1486,10 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
       userId,
       items,
       subtotal,
-      shipping,
+      shipping: finalShipping,
       discount,
       couponCode: couponCode || '',
-      total,
+      total: total + finalShipping - (discount || 0),
       paymentStatus: 'pending',
       status: 'pending',
       timeline: [{
