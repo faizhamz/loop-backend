@@ -229,6 +229,90 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/cart', authMiddleware, cartRoutes);
 
 // ============ ORDER ROUTES ============
+
+// ✅ UPDATED: Create order with breakdown
+app.post('/api/orders', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId || null;
+    const { items, customer, couponCode, couponDiscount = 0, discount = 0 } = req.body;
+    
+    // Calculate subtotal from items
+    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    // Fee Configuration
+    const shippingFee = subtotal > 999 ? 0 : 60;
+    const platformFee = 20;
+    const gstPercent = 12;
+    const gstAmount = Math.round((subtotal + shippingFee + platformFee) * (gstPercent / 100));
+    const handlingFee = 10;
+    
+    // Calculate total
+    const total = subtotal + shippingFee + platformFee + gstAmount + handlingFee - discount - couponDiscount;
+    
+    // Generate Order ID
+    const orderCount = await Order.countDocuments();
+    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
+    
+    // Create order with full breakdown
+    const orderData = {
+      orderId,
+      userId,
+      customer: customer || req.body.customer,
+      items: items || req.body.items,
+      subtotal,
+      shipping: shippingFee,
+      platformFee,
+      gstPercent,
+      gstAmount,
+      handlingFee,
+      discount,
+      couponCode: couponCode || req.body.couponCode || '',
+      couponDiscount,
+      total,
+      paymentMethod: req.body.paymentMethod || 'upi',
+      paymentStatus: 'pending',
+      status: 'pending',
+      timeline: [{
+        status: 'pending',
+        description: 'Order placed successfully',
+        timestamp: new Date()
+      }]
+    };
+    
+    const order = new Order(orderData);
+    await order.save();
+    
+    // Update user
+    if (userId) {
+      await User.findByIdAndUpdate(userId, {
+        $push: { orderIds: order._id },
+        $inc: { totalSpent: total }
+      });
+    }
+    
+    // Update product stock
+    for (const item of order.items) {
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { totalSold: item.quantity }
+      });
+    }
+    
+    // Send notification
+    try {
+      await notificationService.notifyNewOrder(order);
+    } catch (err) {
+      console.log('Notification error:', err);
+    }
+    
+    res.status(201).json(order);
+    
+  } catch (err) {
+    console.error('Order creation error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Existing order routes
 app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ============ PRODUCT ROUTES ============
@@ -1728,95 +1812,6 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
 });
 
 // ============================================
-// ✅ ORDER CREATION ROUTE (UPDATED WITH BREAKDOWN)
-// ============================================
-
-// Create new order
-router.post('/', async (req, res) => {
-  try {
-    const userId = req.userId || null;
-    const { items, customer, couponCode, couponDiscount = 0, discount = 0 } = req.body;
-    
-    // ✅ Calculate subtotal from items
-    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    
-    // ✅ Fee Configuration (can be moved to database later)
-    const shippingFee = subtotal > 999 ? 0 : 60;  // Free shipping above ₹999
-    const platformFee = 20;                        // Platform fee
-    const gstPercent = 12;                        // GST percentage
-    const gstAmount = Math.round((subtotal + shippingFee + platformFee) * (gstPercent / 100));
-    const handlingFee = 10;                       // Handling fee
-    
-    // ✅ Calculate total
-    const total = subtotal + shippingFee + platformFee + gstAmount + handlingFee - discount - couponDiscount;
-    
-    // ✅ Generate Order ID
-    const orderCount = await Order.countDocuments();
-    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
-    
-    // ✅ Create order with full breakdown
-    const orderData = {
-      orderId,
-      userId,
-      customer: customer || req.body.customer,
-      items: items || req.body.items,
-      
-      // Breakdown fields
-      subtotal,
-      shipping: shippingFee,
-      platformFee,
-      gstPercent,
-      gstAmount,
-      handlingFee,
-      discount,
-      couponCode: couponCode || req.body.couponCode || '',
-      couponDiscount,
-      total,
-      
-      paymentMethod: req.body.paymentMethod || 'upi',
-      paymentStatus: 'pending',
-      status: 'pending',
-      timeline: [{
-        status: 'pending',
-        description: 'Order placed successfully',
-        timestamp: new Date()
-      }]
-    };
-    
-    const order = new Order(orderData);
-    await order.save();
-    
-    // ✅ Update user
-    if (userId) {
-      await User.findByIdAndUpdate(userId, {
-        $push: { orderIds: order._id },
-        $inc: { totalSpent: total }
-      });
-    }
-    
-    // ✅ Update product stock
-    for (const item of order.items) {
-      await Product.findByIdAndUpdate(item.productId, {
-        $inc: { totalSold: item.quantity }
-      });
-    }
-    
-    // ✅ Send notification (optional)
-    try {
-      await notificationService.notifyNewOrder(order);
-    } catch (err) {
-      console.log('Notification error:', err);
-    }
-    
-    res.status(201).json(order);
-    
-  } catch (err) {
-    console.error('Order creation error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ============================================
 // ✅ PDF INVOICE GENERATOR (Helper)
 // ============================================
 
@@ -1878,7 +1873,7 @@ const generateInvoice = (order) => {
       doc.moveDown();
       const totalY = doc.y;
       
-      // ✅ Show breakdown in invoice
+      // Show breakdown in invoice
       doc.fontSize(12).fillColor('#555');
       doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
       doc.text(`Shipping: ₹${order.shipping || 60}`, 400, doc.y + 20, { align: 'right' });
