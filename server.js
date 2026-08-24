@@ -242,9 +242,9 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     // Fee Configuration
     const shippingFee = subtotal > 999 ? 0 : 60;
     const platformFee = 20;
-    const gstPercent = 12;
-    const gstAmount = Math.round((subtotal + shippingFee + platformFee) * (gstPercent / 100));
-    const handlingFee = 10;
+    const gstPercent = 0;
+    const gstAmount = 0;
+    const handlingFee = 0;
     
     // Calculate total
     const total = subtotal + shippingFee + platformFee + gstAmount + handlingFee - discount - couponDiscount;
