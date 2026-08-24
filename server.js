@@ -230,7 +230,7 @@ app.use('/api/cart', authMiddleware, cartRoutes);
 
 // ============ ORDER ROUTES ============
 
-// ✅ UPDATED: Create order with breakdown
+// ✅ UPDATED: Create order with breakdown - GST REMOVED, Platform & Handling FREE
 app.post('/api/orders', authMiddleware, async (req, res) => {
   try {
     const userId = req.userId || null;
@@ -239,15 +239,13 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
     // Calculate subtotal from items
     const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     
-    // Fee Configuration
+    // ✅ UPDATED Fee Configuration
     const shippingFee = subtotal > 999 ? 0 : 60;
-    const platformFee = 20;
-    const gstPercent = 0;
-    const gstAmount = 0;
-    const handlingFee = 0;
+    const platformFee = 0;       // Free - No platform fee
+    const handlingFee = 0;       // Free - No handling fee
     
     // Calculate total
-    const total = subtotal + shippingFee + platformFee + gstAmount + handlingFee - discount - couponDiscount;
+    const total = subtotal + shippingFee + platformFee + handlingFee - discount - couponDiscount;
     
     // Generate Order ID
     const orderCount = await Order.countDocuments();
@@ -261,15 +259,13 @@ app.post('/api/orders', authMiddleware, async (req, res) => {
       items: items || req.body.items,
       subtotal,
       shipping: shippingFee,
-      platformFee,
-      gstPercent,
-      gstAmount,
-      handlingFee,
+      platformFee: platformFee,
+      handlingFee: handlingFee,
       discount,
       couponCode: couponCode || req.body.couponCode || '',
       couponDiscount,
       total,
-      paymentMethod: req.body.paymentMethod || 'upi',
+      paymentMethod: req.body.paymentMethod || 'razorpay',
       paymentStatus: 'pending',
       status: 'pending',
       timeline: [{
@@ -1812,7 +1808,7 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
 });
 
 // ============================================
-// ✅ PDF INVOICE GENERATOR (Helper)
+// ✅ PDF INVOICE GENERATOR - UPDATED
 // ============================================
 
 const generateInvoice = (order) => {
@@ -1873,13 +1869,26 @@ const generateInvoice = (order) => {
       doc.moveDown();
       const totalY = doc.y;
       
-      // Show breakdown in invoice
+      // ✅ UPDATED: Show breakdown with FREE badges in invoice
       doc.fontSize(12).fillColor('#555');
       doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
-      doc.text(`Shipping: ₹${order.shipping || 60}`, 400, doc.y + 20, { align: 'right' });
-      doc.text(`Platform Fee: ₹${order.platformFee || 20}`, 400, doc.y + 20, { align: 'right' });
-      doc.text(`GST (${order.gstPercent || 12}%): ₹${order.gstAmount || 0}`, 400, doc.y + 20, { align: 'right' });
-      doc.text(`Handling Fee: ₹${order.handlingFee || 10}`, 400, doc.y + 20, { align: 'right' });
+      doc.text(`Shipping: ${order.shipping === 0 ? 'FREE 🎉' : `₹${order.shipping}`}`, 400, doc.y + 20, { align: 'right' });
+      
+      // ✅ Platform Fee - Show FREE
+      if (order.platformFee > 0) {
+        doc.text(`Platform Fee: ₹${order.platformFee}`, 400, doc.y + 20, { align: 'right' });
+      } else {
+        doc.text(`Platform Fee: FREE 🎉`, 400, doc.y + 20, { align: 'right' });
+      }
+      
+      // ✅ Handling Fee - Show FREE
+      if (order.handlingFee > 0) {
+        doc.text(`Handling Fee: ₹${order.handlingFee}`, 400, doc.y + 20, { align: 'right' });
+      } else {
+        doc.text(`Handling Fee: FREE 🎉`, 400, doc.y + 20, { align: 'right' });
+      }
+      
+      // ✅ GST removed completely
       
       if (order.discount > 0) {
         doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
