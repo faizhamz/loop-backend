@@ -49,7 +49,6 @@ router.get('/product/:productId', async (req, res) => {
       }}
     ]);
     
-    // Rating distribution
     const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     if (stats.length > 0) {
       stats[0].distribution.forEach(r => {
@@ -81,15 +80,11 @@ router.get('/product/:productId', async (req, res) => {
 });
 
 // ============================================
-// AUTHENTICATED ROUTES
+// ✅ CHECK IF USER CAN REVIEW
 // ============================================
-
-// Check if user can review a product
 router.get('/can-review/:productId', async (req, res) => {
   try {
-    const { productId } = req.params;
-    const userId = req.userId; // From auth middleware
-    
+    const userId = req.userId;
     if (!userId) {
       return res.json({ canReview: false, reason: 'Please login to review' });
     }
@@ -97,17 +92,18 @@ router.get('/can-review/:productId', async (req, res) => {
     // Check if user has purchased this product
     const orders = await Order.find({
       userId,
-      status: { $in: ['delivered', 'shipped'] },
-      'items.productId': productId
+      status: { $in: ['delivered'] },
+      'items.productId': req.params.productId,
+      'items.isReviewed': { $ne: true }
     });
     
     if (orders.length === 0) {
       return res.json({ canReview: false, reason: 'You need to purchase this product to review' });
     }
     
-    // Check if already reviewed this product
+    // Check if already reviewed
     const existingReview = await Review.findOne({
-      productId,
+      productId: req.params.productId,
       userId,
       isDeleted: false
     });
@@ -116,11 +112,11 @@ router.get('/can-review/:productId', async (req, res) => {
       return res.json({ canReview: false, reason: 'You have already reviewed this product' });
     }
     
-    // Find which order items can be reviewed
+    // Find reviewable items
     const reviewableItems = [];
     orders.forEach(order => {
       order.items.forEach(item => {
-        if (item.productId.toString() === productId && !item.isReviewed) {
+        if (item.productId.toString() === req.params.productId && !item.isReviewed) {
           reviewableItems.push({
             orderId: order._id,
             orderItemId: item._id,
@@ -140,9 +136,14 @@ router.get('/can-review/:productId', async (req, res) => {
       order: orders[0]
     });
   } catch (err) {
+    console.error('Can review error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
+// ============================================
+// AUTHENTICATED ROUTES
+// ============================================
 
 // Submit a review
 router.post('/submit', async (req, res) => {
@@ -158,7 +159,7 @@ router.post('/submit', async (req, res) => {
     const order = await Order.findOne({
       _id: orderId,
       userId,
-      status: { $in: ['delivered', 'shipped'] }
+      status: 'delivered'
     });
     
     if (!order) {
@@ -214,6 +215,7 @@ router.post('/submit', async (req, res) => {
       review 
     });
   } catch (err) {
+    console.error('Submit review error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -277,7 +279,6 @@ router.get('/admin/analytics', async (req, res) => {
       }}
     ]);
     
-    // Monthly trend
     const monthly = await Review.aggregate([
       { $match: { isDeleted: false } },
       { $group: {
@@ -316,7 +317,6 @@ router.delete('/admin/:reviewId', async (req, res) => {
     review.isDeleted = true;
     await review.save();
     
-    // Update product rating
     const product = await Product.findById(review.productId);
     if (product) {
       const allReviews = await Review.find({ 

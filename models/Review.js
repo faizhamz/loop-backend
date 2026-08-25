@@ -18,7 +18,7 @@ const reviewSchema = new mongoose.Schema({
   },
   orderItemId: { 
     type: mongoose.Schema.Types.ObjectId 
-  }, // Track which order item was reviewed
+  },
   
   // Review content
   rating: { 
@@ -30,18 +30,18 @@ const reviewSchema = new mongoose.Schema({
   title: { type: String, default: '' },
   comment: { type: String, default: '' },
   
-  // NEW: Images in review
+  // Images in review
   images: [{ type: String }],
   
   // Verification
   isVerified: { 
     type: Boolean, 
     default: false 
-  }, // True if user purchased
+  },
   isApproved: { 
     type: Boolean, 
     default: true 
-  }, // Admin approval
+  },
   
   // Helpful votes
   helpfulCount: { type: Number, default: 0 },
@@ -57,10 +57,5 @@ const reviewSchema = new mongoose.Schema({
 
 // Ensure one review per product per order item
 reviewSchema.index({ productId: 1, userId: 1, orderItemId: 1 }, { unique: true });
-
-// Virtual: Check if review is from verified purchase
-reviewSchema.virtual('isVerifiedPurchase').get(function() {
-  return this.isVerified;
-});
 
 module.exports = mongoose.model('Review', reviewSchema);

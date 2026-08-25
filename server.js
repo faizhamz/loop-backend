@@ -229,86 +229,6 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/cart', authMiddleware, cartRoutes);
 
 // ============ ORDER ROUTES ============
-
-// ✅ UPDATED: Create order with breakdown - GST REMOVED, Platform & Handling FREE
-app.post('/api/orders', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.userId || null;
-    const { items, customer, couponCode, couponDiscount = 0, discount = 0 } = req.body;
-    
-    // Calculate subtotal from items
-    const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    
-    // ✅ UPDATED Fee Configuration
-    const shippingFee = subtotal > 999 ? 0 : 60;
-    const platformFee = 0;       // Free - No platform fee
-    const handlingFee = 0;       // Free - No handling fee
-    
-    // Calculate total
-    const total = subtotal + shippingFee + platformFee + handlingFee - discount - couponDiscount;
-    
-    // Generate Order ID
-    const orderCount = await Order.countDocuments();
-    const orderId = `LOOP-${String(orderCount + 1).padStart(3, '0')}`;
-    
-    // Create order with full breakdown
-    const orderData = {
-      orderId,
-      userId,
-      customer: customer || req.body.customer,
-      items: items || req.body.items,
-      subtotal,
-      shipping: shippingFee,
-      platformFee: platformFee,
-      handlingFee: handlingFee,
-      discount,
-      couponCode: couponCode || req.body.couponCode || '',
-      couponDiscount,
-      total,
-      paymentMethod: req.body.paymentMethod || 'razorpay',
-      paymentStatus: 'pending',
-      status: 'pending',
-      timeline: [{
-        status: 'pending',
-        description: 'Order placed successfully',
-        timestamp: new Date()
-      }]
-    };
-    
-    const order = new Order(orderData);
-    await order.save();
-    
-    // Update user
-    if (userId) {
-      await User.findByIdAndUpdate(userId, {
-        $push: { orderIds: order._id },
-        $inc: { totalSpent: total }
-      });
-    }
-    
-    // Update product stock
-    for (const item of order.items) {
-      await Product.findByIdAndUpdate(item.productId, {
-        $inc: { totalSold: item.quantity }
-      });
-    }
-    
-    // Send notification
-    try {
-      await notificationService.notifyNewOrder(order);
-    } catch (err) {
-      console.log('Notification error:', err);
-    }
-    
-    res.status(201).json(order);
-    
-  } catch (err) {
-    console.error('Order creation error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Existing order routes
 app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ============ PRODUCT ROUTES ============
@@ -1869,26 +1789,21 @@ const generateInvoice = (order) => {
       doc.moveDown();
       const totalY = doc.y;
       
-      // ✅ UPDATED: Show breakdown with FREE badges in invoice
       doc.fontSize(12).fillColor('#555');
       doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
       doc.text(`Shipping: ${order.shipping === 0 ? 'FREE 🎉' : `₹${order.shipping}`}`, 400, doc.y + 20, { align: 'right' });
       
-      // ✅ Platform Fee - Show FREE
       if (order.platformFee > 0) {
         doc.text(`Platform Fee: ₹${order.platformFee}`, 400, doc.y + 20, { align: 'right' });
       } else {
         doc.text(`Platform Fee: FREE 🎉`, 400, doc.y + 20, { align: 'right' });
       }
       
-      // ✅ Handling Fee - Show FREE
       if (order.handlingFee > 0) {
         doc.text(`Handling Fee: ₹${order.handlingFee}`, 400, doc.y + 20, { align: 'right' });
       } else {
         doc.text(`Handling Fee: FREE 🎉`, 400, doc.y + 20, { align: 'right' });
       }
-      
-      // ✅ GST removed completely
       
       if (order.discount > 0) {
         doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
@@ -1911,6 +1826,47 @@ const generateInvoice = (order) => {
     }
   });
 };
+
+// ============================================
+// ✅ SITEMAP GENERATOR - SEO
+// ============================================
+
+app.get('/sitemap.xml', async (req, res) => {
+  try {
+    const products = await Product.find().select('productId updatedAt');
+    const categories = await Category.find().select('slug');
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'https://loopstore.in';
+    
+    let sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
+    
+    // Homepage
+    sitemap += `<url><loc>${FRONTEND_URL}/</loc><priority>1.0</priority><changefreq>daily</changefreq></url>`;
+    
+    // Products
+    products.forEach(p => {
+      sitemap += `<url><loc>${FRONTEND_URL}/product/${p.productId}</loc>
+        <lastmod>${p.updatedAt.toISOString().split('T')[0]}</lastmod>
+        <priority>0.8</priority>
+        <changefreq>weekly</changefreq></url>`;
+    });
+    
+    // Categories
+    categories.forEach(c => {
+      sitemap += `<url><loc>${FRONTEND_URL}/category/${c.slug}</loc>
+        <priority>0.6</priority>
+        <changefreq>weekly</changefreq></url>`;
+    });
+    
+    sitemap += `</urlset>`;
+    
+    res.header('Content-Type', 'application/xml');
+    res.send(sitemap);
+  } catch (err) {
+    console.error('Sitemap error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 const PORT = process.env.PORT || 5002;
 app.listen(PORT, () => {
