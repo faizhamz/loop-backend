@@ -34,7 +34,7 @@ const Review = require('./models/Review');
 const Contact = require('./models/Contact');
 const Notification = require('./models/Notification');
 const categoryRoutes = require('./routes/categoryRoutes');
-const { AnalyticsEvent } = require('./models/Analytics');
+const { AnalyticsEvent, DailyAnalytics } = require('./models/Analytics');
 
 // Import Routes
 const bannerRoutes = require('./routes/bannerRoutes');
@@ -233,10 +233,10 @@ app.use('/api/cart', authMiddleware, cartRoutes);
 app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ============================================
-// ✅ MARKETING ROUTES
+// ✅ MARKETING ROUTES - WITH REAL DATA
 // ============================================
 
-// ✅ Get marketing analytics data
+// ✅ Get marketing analytics data (REAL DATA)
 app.get('/api/marketing/analytics', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { period } = req.query;
@@ -248,21 +248,21 @@ app.get('/api/marketing/analytics', authMiddleware, adminMiddleware, async (req,
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     
-    // Get orders in period
+    // ✅ Get REAL orders in period (paid orders only)
     const orders = await Order.find({
       createdAt: { $gte: startDate },
       paymentStatus: 'paid'
     });
     
-    // Get total revenue
+    // ✅ Get REAL total revenue
     const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
     
-    // Get unique visitors from analytics
+    // ✅ Get REAL unique visitors from analytics
     const visitors = await AnalyticsEvent.distinct('visitorId', {
       timestamp: { $gte: startDate }
     });
     
-    // Get top products
+    // ✅ Get REAL top products from orders
     const topProducts = await Order.aggregate([
       { $match: { paymentStatus: 'paid', createdAt: { $gte: startDate } } },
       { $unwind: '$items' },
@@ -276,42 +276,84 @@ app.get('/api/marketing/analytics', authMiddleware, adminMiddleware, async (req,
       { $limit: 10 }
     ]);
     
-    // Traffic sources (simulated - from UTM tracking)
+    // ✅ Get REAL today's visitors
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayVisitors = await AnalyticsEvent.distinct('visitorId', {
+      timestamp: { $gte: todayStart }
+    });
+    
+    // ✅ REAL conversion rate
+    const visitorCount = visitors.length || 0;
+    const orderCount = orders.length || 0;
+    const conversionRate = visitorCount > 0 ? (orderCount / visitorCount) * 100 : 0;
+    
+    // ⚠️ Traffic sources - REAL from UTM tracking (if implemented)
+    // For now, if no UTM data, show 0% for all
     const trafficSources = {
-      facebook: 35,
-      instagram: 22,
-      google: 28,
-      direct: 15
+      facebook: 0,
+      instagram: 0,
+      google: 0,
+      direct: 0
     };
     
-    // Pixel events (from analytics)
+    // ⚠️ Pixel events - REAL from analytics (if tracking is active)
+    // For now, calculate from real data or show 0
+    const productViews = await AnalyticsEvent.countDocuments({
+      eventType: 'product_view',
+      timestamp: { $gte: startDate }
+    });
+    
+    const addToCartEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'add_to_cart',
+      timestamp: { $gte: startDate }
+    });
+    
+    const checkoutEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'initiate_checkout',
+      timestamp: { $gte: startDate }
+    });
+    
+    const purchaseEvents = orderCount;
+    
+    // Calculate percentages based on real data
+    const totalEvents = productViews + addToCartEvents + checkoutEvents + purchaseEvents || 1;
+    
     const pixelEvents = [
-      { event: 'ViewContent', count: Math.floor(visitors.length * 0.65), percentage: 65 },
-      { event: 'AddToCart', count: Math.floor(visitors.length * 0.20), percentage: 20 },
-      { event: 'InitiateCheckout', count: Math.floor(visitors.length * 0.11), percentage: 11 },
-      { event: 'Purchase', count: orders.length, percentage: visitors.length > 0 ? Math.round((orders.length / visitors.length) * 100) : 0 }
+      { 
+        event: 'ViewContent', 
+        count: productViews, 
+        percentage: Math.round((productViews / totalEvents) * 100) || 0 
+      },
+      { 
+        event: 'AddToCart', 
+        count: addToCartEvents, 
+        percentage: Math.round((addToCartEvents / totalEvents) * 100) || 0 
+      },
+      { 
+        event: 'InitiateCheckout', 
+        count: checkoutEvents, 
+        percentage: Math.round((checkoutEvents / totalEvents) * 100) || 0 
+      },
+      { 
+        event: 'Purchase', 
+        count: purchaseEvents, 
+        percentage: visitorCount > 0 ? Math.round((purchaseEvents / visitorCount) * 100) : 0 
+      }
     ];
     
-    // Campaigns (simulated - would come from Meta/Google APIs)
-    const campaigns = [
-      { id: 'fb1', name: 'Facebook - Summer Sale', platform: 'facebook', spend: 2500, clicks: 450, conversions: 28, revenue: 12000 },
-      { id: 'fb2', name: 'Instagram - New Collection', platform: 'instagram', spend: 1800, clicks: 320, conversions: 18, revenue: 8500 },
-      { id: 'gg1', name: 'Google - Brand Search', platform: 'google', spend: 1200, clicks: 280, conversions: 22, revenue: 9500 },
-      { id: 'gg2', name: 'Google - Shopping', platform: 'google', spend: 2000, clicks: 410, conversions: 35, revenue: 15000 },
-    ];
-    
-    const conversionRate = visitors.length > 0 ? (orders.length / visitors.length) * 100 : 0;
+    // ⚠️ Campaigns - REAL from Meta/Google API (when integrated)
+    // For now, show empty array
+    const campaigns = [];
     
     res.json({
       visitors: {
-        total: visitors.length,
-        today: await AnalyticsEvent.countDocuments({
-          timestamp: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) }
-        }) || 0,
-        week: visitors.length
+        total: visitorCount,
+        today: todayVisitors.length || 0,
+        week: visitorCount
       },
       conversions: {
-        total: orders.length,
+        total: orderCount,
         rate: Math.round(conversionRate * 10) / 10,
         bySource: trafficSources
       },
@@ -335,18 +377,19 @@ app.get('/api/marketing/analytics', authMiddleware, adminMiddleware, async (req,
   }
 });
 
-// ✅ Get marketing overview stats (for dashboard cards)
+// ✅ Get marketing overview stats (for dashboard cards) - REAL DATA
 app.get('/api/marketing/overview', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Get today's stats
+    // ✅ REAL today's orders
     const todayOrders = await Order.countDocuments({
       createdAt: { $gte: today },
       paymentStatus: 'paid'
     });
     
+    // ✅ REAL today's revenue
     const todayRevenue = await Order.aggregate([
       { 
         $match: { 
@@ -357,16 +400,21 @@ app.get('/api/marketing/overview', authMiddleware, adminMiddleware, async (req, 
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
     
+    // ✅ REAL today's visitors
     const todayVisitors = await AnalyticsEvent.distinct('visitorId', {
       timestamp: { $gte: today }
     });
     
-    // Get total stats
+    // ✅ REAL total orders
     const totalOrders = await Order.countDocuments({ paymentStatus: 'paid' });
+    
+    // ✅ REAL total revenue
     const totalRevenue = await Order.aggregate([
       { $match: { paymentStatus: 'paid' } },
       { $group: { _id: null, total: { $sum: '$total' } } }
     ]);
+    
+    // ✅ REAL total visitors
     const totalVisitors = await AnalyticsEvent.distinct('visitorId');
     
     res.json({
@@ -387,36 +435,67 @@ app.get('/api/marketing/overview', authMiddleware, adminMiddleware, async (req, 
   }
 });
 
-// ✅ Get pixel event data
+// ✅ Get pixel event data - REAL DATA
 app.get('/api/marketing/pixel-events', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { days = 7 } = req.query;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(days));
     
-    // Get actual visitor data
+    // ✅ REAL visitor data
     const totalVisitors = await AnalyticsEvent.distinct('visitorId', {
       timestamp: { $gte: startDate }
     });
     
-    // Get purchase data
+    // ✅ REAL purchase data
     const purchases = await Order.countDocuments({
       createdAt: { $gte: startDate },
       paymentStatus: 'paid'
     });
     
-    // Get product views (from analytics events)
+    // ✅ REAL product views
     const productViews = await AnalyticsEvent.countDocuments({
       eventType: 'product_view',
       timestamp: { $gte: startDate }
     });
     
+    // ✅ REAL add to cart events
+    const addToCartEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'add_to_cart',
+      timestamp: { $gte: startDate }
+    });
+    
+    // ✅ REAL checkout events
+    const checkoutEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'initiate_checkout',
+      timestamp: { $gte: startDate }
+    });
+    
+    const totalEvents = productViews + addToCartEvents + checkoutEvents + purchases || 1;
+    const visitorCount = totalVisitors.length || 0;
+    
     res.json({
       events: [
-        { event: 'ViewContent', count: productViews || totalVisitors.length * 2, percentage: 100 },
-        { event: 'AddToCart', count: Math.floor(totalVisitors.length * 0.3), percentage: 30 },
-        { event: 'InitiateCheckout', count: Math.floor(totalVisitors.length * 0.15), percentage: 15 },
-        { event: 'Purchase', count: purchases, percentage: totalVisitors.length > 0 ? Math.round((purchases / totalVisitors.length) * 100) : 0 }
+        { 
+          event: 'ViewContent', 
+          count: productViews || 0, 
+          percentage: Math.round((productViews / totalEvents) * 100) || 0 
+        },
+        { 
+          event: 'AddToCart', 
+          count: addToCartEvents || 0, 
+          percentage: Math.round((addToCartEvents / totalEvents) * 100) || 0 
+        },
+        { 
+          event: 'InitiateCheckout', 
+          count: checkoutEvents || 0, 
+          percentage: Math.round((checkoutEvents / totalEvents) * 100) || 0 
+        },
+        { 
+          event: 'Purchase', 
+          count: purchases || 0, 
+          percentage: visitorCount > 0 ? Math.round((purchases / visitorCount) * 100) : 0 
+        }
       ],
       period: parseInt(days)
     });
@@ -426,7 +505,7 @@ app.get('/api/marketing/pixel-events', authMiddleware, adminMiddleware, async (r
   }
 });
 
-// ✅ Track UTM parameters (for marketing attribution)
+// ✅ Track UTM parameters
 app.post('/api/marketing/track-utm', async (req, res) => {
   try {
     const { utm_source, utm_medium, utm_campaign, utm_term, utm_content, visitorId, userId } = req.body;
