@@ -110,8 +110,57 @@ mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 30000,
   connectTimeoutMS: 30000,
 })
-.then(() => console.log('✅ MongoDB connected'))
+.then(() => {
+  console.log('✅ MongoDB connected');
+  
+  // ✅ START AUTO-CLEANUP AFTER DB CONNECTS
+  startAutoCleanup();
+})
 .catch(err => console.log('❌ MongoDB error:', err));
+
+// ============================================
+// ✅ AUTO-CANCEL PENDING ORDERS - Add this function
+// ============================================
+function startAutoCleanup() {
+  // Run once immediately on startup
+  cleanupPendingOrders();
+  
+  // Then run every 5 minutes
+  setInterval(() => {
+    cleanupPendingOrders();
+  }, 5 * 60 * 1000);
+  
+  console.log('🔄 Auto-cleanup started - checking every 5 minutes');
+}
+
+async function cleanupPendingOrders() {
+  try {
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const result = await Order.updateMany(
+      {
+        status: 'pending',
+        paymentStatus: 'pending',
+        createdAt: { $lt: thirtyMinutesAgo }
+      },
+      {
+        status: 'cancelled',
+        paymentStatus: 'failed',
+        $push: {
+          timeline: {
+            status: 'cancelled',
+            description: 'Order auto-cancelled - payment not completed within 30 minutes',
+            timestamp: new Date()
+          }
+        }
+      }
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`✅ Auto-cancelled ${result.modifiedCount} pending orders`);
+    }
+  } catch (err) {
+    console.error('Auto-cleanup error:', err);
+  }
+}
 
 // ============ AUTH MIDDLEWARE ============
 const authMiddleware = (req, res, next) => {
