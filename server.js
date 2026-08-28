@@ -42,27 +42,28 @@ const reviewRoutes = require('./routes/reviewRoutes');
 const contactRoutes = require('./routes/contactRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const variantRoutes = require('./routes/variantRoutes');
-
-// ✅ Import Cart Routes
 const cartRoutes = require('./routes/cartRoutes');
-
-// ✅ Import Order Routes
 const orderRoutes = require('./routes/orderRoutes');
 
-// ✅ Initialize Razorpay with fallback
+// ✅ Initialize Razorpay with proper error handling
 let razorpay = null;
 try {
+  console.log('🔑 Checking Razorpay keys...');
+  console.log('RAZORPAY_KEY_ID exists:', !!process.env.RAZORPAY_KEY_ID);
+  console.log('RAZORPAY_KEY_SECRET exists:', !!process.env.RAZORPAY_KEY_SECRET);
+  
   if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
     razorpay = new Razorpay({
       key_id: process.env.RAZORPAY_KEY_ID,
       key_secret: process.env.RAZORPAY_KEY_SECRET
     });
-    console.log('✅ Razorpay initialized');
+    console.log('✅ Razorpay initialized successfully');
   } else {
     console.log('⚠️ Razorpay keys missing — payment disabled. Add keys to enable.');
   }
 } catch (err) {
-  console.log('⚠️ Razorpay initialization failed:', err.message);
+  console.error('❌ Razorpay initialization failed:', err.message);
+  razorpay = null;
 }
 
 // MongoDB connection
@@ -197,1423 +198,67 @@ app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
 });
 
-// ============ BANNER ROUTES ============
+// ============ ROUTES ============
 app.use('/api/banners', bannerRoutes);
-
-// ============ REVIEW ROUTES ============
 app.use('/api/reviews', authMiddleware, reviewRoutes);
-
-// ============ CONTACT ROUTES ============
 app.use('/api/contact', contactRoutes);
-
-// ============ NOTIFICATION ROUTES ============
 app.use('/api/notifications', notificationRoutes);
-
-// ============ VARIANT ROUTES ============
 app.use('/api/variants', authMiddleware, variantRoutes);
 
-// ============ ANALYTICS ROUTES ============ 
 const analyticsRoutes = require('./routes/analyticsRoutes');
 app.use('/api/analytics', analyticsRoutes);
 
-// ============ UPLOAD ROUTES ============
 const uploadRoutes = require('./routes/uploadRoutes');
 app.use('/api/upload', uploadRoutes);
 
-// ============ SERVE STATIC FILES ============
 app.use('/uploads', express.static('uploads'));
 
-//Category Routes
 app.use('/api/categories', categoryRoutes);
-
-// ============ CART ROUTES ============
 app.use('/api/cart', authMiddleware, cartRoutes);
-
-// ============ ORDER ROUTES ============
 app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ============================================
-// ✅ MARKETING ROUTES - WITH REAL DATA
-// ============================================
-
-// ✅ Get marketing analytics data (REAL DATA)
-app.get('/api/marketing/analytics', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const { period } = req.query;
-    let days = 7;
-    if (period === 'today') days = 1;
-    if (period === '30days') days = 30;
-    if (period === '90days') days = 90;
-    
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    
-    // ✅ Get REAL orders in period (paid orders only)
-    const orders = await Order.find({
-      createdAt: { $gte: startDate },
-      paymentStatus: 'paid'
-    });
-    
-    // ✅ Get REAL total revenue
-    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
-    
-    // ✅ Get REAL unique visitors from analytics
-    const visitors = await AnalyticsEvent.distinct('visitorId', {
-      timestamp: { $gte: startDate }
-    });
-    
-    // ✅ Get REAL top products from orders
-    const topProducts = await Order.aggregate([
-      { $match: { paymentStatus: 'paid', createdAt: { $gte: startDate } } },
-      { $unwind: '$items' },
-      { $group: {
-        _id: '$items.productId',
-        name: { $first: '$items.name' },
-        totalSold: { $sum: '$items.quantity' },
-        revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }
-      }},
-      { $sort: { totalSold: -1 } },
-      { $limit: 10 }
-    ]);
-    
-    // ✅ Get REAL today's visitors
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayVisitors = await AnalyticsEvent.distinct('visitorId', {
-      timestamp: { $gte: todayStart }
-    });
-    
-    // ✅ REAL conversion rate
-    const visitorCount = visitors.length || 0;
-    const orderCount = orders.length || 0;
-    const conversionRate = visitorCount > 0 ? (orderCount / visitorCount) * 100 : 0;
-    
-    // ⚠️ Traffic sources - REAL from UTM tracking (if implemented)
-    // For now, if no UTM data, show 0% for all
-    const trafficSources = {
-      facebook: 0,
-      instagram: 0,
-      google: 0,
-      direct: 0
-    };
-    
-    // ⚠️ Pixel events - REAL from analytics (if tracking is active)
-    // For now, calculate from real data or show 0
-    const productViews = await AnalyticsEvent.countDocuments({
-      eventType: 'product_view',
-      timestamp: { $gte: startDate }
-    });
-    
-    const addToCartEvents = await AnalyticsEvent.countDocuments({
-      eventType: 'add_to_cart',
-      timestamp: { $gte: startDate }
-    });
-    
-    const checkoutEvents = await AnalyticsEvent.countDocuments({
-      eventType: 'initiate_checkout',
-      timestamp: { $gte: startDate }
-    });
-    
-    const purchaseEvents = orderCount;
-    
-    // Calculate percentages based on real data
-    const totalEvents = productViews + addToCartEvents + checkoutEvents + purchaseEvents || 1;
-    
-    const pixelEvents = [
-      { 
-        event: 'ViewContent', 
-        count: productViews, 
-        percentage: Math.round((productViews / totalEvents) * 100) || 0 
-      },
-      { 
-        event: 'AddToCart', 
-        count: addToCartEvents, 
-        percentage: Math.round((addToCartEvents / totalEvents) * 100) || 0 
-      },
-      { 
-        event: 'InitiateCheckout', 
-        count: checkoutEvents, 
-        percentage: Math.round((checkoutEvents / totalEvents) * 100) || 0 
-      },
-      { 
-        event: 'Purchase', 
-        count: purchaseEvents, 
-        percentage: visitorCount > 0 ? Math.round((purchaseEvents / visitorCount) * 100) : 0 
-      }
-    ];
-    
-    // ⚠️ Campaigns - REAL from Meta/Google API (when integrated)
-    // For now, show empty array
-    const campaigns = [];
-    
-    res.json({
-      visitors: {
-        total: visitorCount,
-        today: todayVisitors.length || 0,
-        week: visitorCount
-      },
-      conversions: {
-        total: orderCount,
-        rate: Math.round(conversionRate * 10) / 10,
-        bySource: trafficSources
-      },
-      revenue: {
-        total: totalRevenue,
-        period: days
-      },
-      topProducts: topProducts.map(p => ({
-        ...p,
-        name: p.name || 'Unknown Product',
-        revenue: p.revenue || 0
-      })),
-      campaigns,
-      pixelEvents,
-      period: days
-    });
-    
-  } catch (err) {
-    console.error('Marketing analytics error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ Get marketing overview stats (for dashboard cards) - REAL DATA
-app.get('/api/marketing/overview', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    // ✅ REAL today's orders
-    const todayOrders = await Order.countDocuments({
-      createdAt: { $gte: today },
-      paymentStatus: 'paid'
-    });
-    
-    // ✅ REAL today's revenue
-    const todayRevenue = await Order.aggregate([
-      { 
-        $match: { 
-          createdAt: { $gte: today },
-          paymentStatus: 'paid' 
-        } 
-      },
-      { $group: { _id: null, total: { $sum: '$total' } } }
-    ]);
-    
-    // ✅ REAL today's visitors
-    const todayVisitors = await AnalyticsEvent.distinct('visitorId', {
-      timestamp: { $gte: today }
-    });
-    
-    // ✅ REAL total orders
-    const totalOrders = await Order.countDocuments({ paymentStatus: 'paid' });
-    
-    // ✅ REAL total revenue
-    const totalRevenue = await Order.aggregate([
-      { $match: { paymentStatus: 'paid' } },
-      { $group: { _id: null, total: { $sum: '$total' } } }
-    ]);
-    
-    // ✅ REAL total visitors
-    const totalVisitors = await AnalyticsEvent.distinct('visitorId');
-    
-    res.json({
-      today: {
-        orders: todayOrders,
-        revenue: todayRevenue[0]?.total || 0,
-        visitors: todayVisitors.length
-      },
-      total: {
-        orders: totalOrders,
-        revenue: totalRevenue[0]?.total || 0,
-        visitors: totalVisitors.length
-      }
-    });
-  } catch (err) {
-    console.error('Marketing overview error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ Get pixel event data - REAL DATA
-app.get('/api/marketing/pixel-events', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const { days = 7 } = req.query;
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - parseInt(days));
-    
-    // ✅ REAL visitor data
-    const totalVisitors = await AnalyticsEvent.distinct('visitorId', {
-      timestamp: { $gte: startDate }
-    });
-    
-    // ✅ REAL purchase data
-    const purchases = await Order.countDocuments({
-      createdAt: { $gte: startDate },
-      paymentStatus: 'paid'
-    });
-    
-    // ✅ REAL product views
-    const productViews = await AnalyticsEvent.countDocuments({
-      eventType: 'product_view',
-      timestamp: { $gte: startDate }
-    });
-    
-    // ✅ REAL add to cart events
-    const addToCartEvents = await AnalyticsEvent.countDocuments({
-      eventType: 'add_to_cart',
-      timestamp: { $gte: startDate }
-    });
-    
-    // ✅ REAL checkout events
-    const checkoutEvents = await AnalyticsEvent.countDocuments({
-      eventType: 'initiate_checkout',
-      timestamp: { $gte: startDate }
-    });
-    
-    const totalEvents = productViews + addToCartEvents + checkoutEvents + purchases || 1;
-    const visitorCount = totalVisitors.length || 0;
-    
-    res.json({
-      events: [
-        { 
-          event: 'ViewContent', 
-          count: productViews || 0, 
-          percentage: Math.round((productViews / totalEvents) * 100) || 0 
-        },
-        { 
-          event: 'AddToCart', 
-          count: addToCartEvents || 0, 
-          percentage: Math.round((addToCartEvents / totalEvents) * 100) || 0 
-        },
-        { 
-          event: 'InitiateCheckout', 
-          count: checkoutEvents || 0, 
-          percentage: Math.round((checkoutEvents / totalEvents) * 100) || 0 
-        },
-        { 
-          event: 'Purchase', 
-          count: purchases || 0, 
-          percentage: visitorCount > 0 ? Math.round((purchases / visitorCount) * 100) : 0 
-        }
-      ],
-      period: parseInt(days)
-    });
-  } catch (err) {
-    console.error('Pixel events error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ Track UTM parameters
-app.post('/api/marketing/track-utm', async (req, res) => {
-  try {
-    const { utm_source, utm_medium, utm_campaign, utm_term, utm_content, visitorId, userId } = req.body;
-    
-    // Store UTM data for attribution
-    const UTMTracking = require('./models/UTMTracking');
-    const track = new UTMTracking({
-      visitorId: visitorId || 'unknown',
-      userId: userId || null,
-      utm_source: utm_source || '',
-      utm_medium: utm_medium || '',
-      utm_campaign: utm_campaign || '',
-      utm_term: utm_term || '',
-      utm_content: utm_content || '',
-      timestamp: new Date()
-    });
-    await track.save();
-    
-    res.json({ success: true, message: 'UTM tracked successfully' });
-  } catch (err) {
-    console.error('UTM tracking error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================
-// END MARKETING ROUTES
-// ============================================
-
-// ============ PRODUCT ROUTES ============
-
-app.get('/api/products', async (req, res) => {
-  try {
-    const products = await Product.find().sort({ createdAt: -1 });
-    res.json(products);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/products/:slug', async (req, res) => {
-  try {
-    const slug = req.params.slug;
-    let product = null;
-
-    product = await Product.findOne({ productId: slug });
-    if (!product && mongoose.Types.ObjectId.isValid(slug)) {
-      product = await Product.findById(slug);
-    }
-    if (!product) {
-      const nameSlug = slug.replace(/-/g, ' ');
-      product = await Product.findOne({
-        name: { $regex: new RegExp(`^${nameSlug}$`, 'i') }
-      });
-    }
-    if (!product) {
-      product = await Product.findOne({
-        name: { $regex: new RegExp(slug.replace(/-/g, ' '), 'i') }
-      });
-    }
-
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-
-    res.json(product);
-  } catch (err) {
-    console.error('Error fetching product:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/products/id/:id', async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ error: 'Product not found' });
-    res.json(product);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/products', async (req, res) => {
-  try {
-    if (req.body.productId) {
-      const existing = await Product.findOne({ productId: req.body.productId });
-      if (existing) {
-        return res.status(400).json({ error: 'Product ID already exists. Please use a different ID.' });
-      }
-    }
-    const product = new Product(req.body);
-    await product.save();
-    res.status(201).json(product);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.put('/api/products/:id', async (req, res) => {
-  try {
-    if (req.body.productId) {
-      const existing = await Product.findOne({
-        productId: req.body.productId,
-        _id: { $ne: req.params.id }
-      });
-      if (existing) {
-        return res.status(400).json({ error: 'Product ID already exists. Please use a different ID.' });
-      }
-    }
-    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    res.json(product);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.delete('/api/products/:id', async (req, res) => {
-  try {
-    const product = await Product.findByIdAndDelete(req.params.id);
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    res.json({ message: 'Product deleted successfully', productId: req.params.id });
-  } catch (err) {
-    console.error('Error deleting product:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.patch('/api/products/:id/status', async (req, res) => {
-  try {
-    const { status } = req.body;
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    product.status = status;
-    product.isActive = status === 'active';
-    await product.save();
-    res.json({ message: `Product status updated to ${status}`, product });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============ COUPON ROUTES ============
-app.get('/api/coupons', async (req, res) => {
-  try {
-    const coupons = await Coupon.find().sort({ createdAt: -1 });
-    res.json(coupons);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/coupons/:id', async (req, res) => {
-  try {
-    const coupon = await Coupon.findById(req.params.id);
-    if (!coupon) return res.status(404).json({ error: 'Coupon not found' });
-    res.json(coupon);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/coupons', async (req, res) => {
-  try {
-    const coupon = new Coupon(req.body);
-    await coupon.save();
-    res.status(201).json(coupon);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.put('/api/coupons/:id', async (req, res) => {
-  try {
-    const coupon = await Coupon.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(coupon);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.delete('/api/coupons/:id', async (req, res) => {
-  try {
-    await Coupon.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Coupon deleted' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.patch('/api/coupons/:id/toggle', async (req, res) => {
-  try {
-    const coupon = await Coupon.findById(req.params.id);
-    coupon.isActive = !coupon.isActive;
-    await coupon.save();
-    res.json({ isActive: coupon.isActive });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/coupons/validate', async (req, res) => {
-  try {
-    const { code, userId, cartTotal } = req.body;
-    const coupon = await Coupon.findOne({ code, isActive: true, isDeleted: false });
-
-    if (!coupon) {
-      return res.status(404).json({ valid: false, message: 'Invalid coupon code' });
-    }
-
-    const now = new Date();
-    if (coupon.validUntil && now > coupon.validUntil) {
-      return res.status(400).json({ valid: false, message: 'Coupon has expired' });
-    }
-
-    if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
-      return res.status(400).json({ valid: false, message: 'Coupon usage limit reached' });
-    }
-
-    if (coupon.userSpecific && coupon.userId.toString() !== userId) {
-      return res.status(400).json({ valid: false, message: 'This coupon is not valid for your account' });
-    }
-
-    if (coupon.minOrderValue > 0 && cartTotal < coupon.minOrderValue) {
-      return res.status(400).json({
-        valid: false,
-        message: `Minimum order of ₹${coupon.minOrderValue} required`
-      });
-    }
-
-    let discountAmount = 0;
-    if (coupon.discountType === 'percentage') {
-      discountAmount = (cartTotal * coupon.discountValue) / 100;
-      if (coupon.maxDiscount > 0 && discountAmount > coupon.maxDiscount) {
-        discountAmount = coupon.maxDiscount;
-      }
-    } else if (coupon.discountType === 'fixed') {
-      discountAmount = coupon.discountValue;
-    }
-
-    res.json({
-      valid: true,
-      discountAmount,
-      discountPercent: coupon.discountType === 'percentage' ? coupon.discountValue : 0,
-      message: 'Coupon applied successfully'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/coupons/assign-to-user', async (req, res) => {
-  try {
-    const { userId, discountValue, validDays, reason } = req.body;
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const code = `INSTA-${user.refId || user.name.substring(0,4).toUpperCase()}-${discountValue}`;
-    const validUntil = new Date();
-    validUntil.setDate(validUntil.getDate() + validDays);
-
-    const coupon = new Coupon({
-      code,
-      name: `${reason} Reward`,
-      description: `Special ${discountValue}% off coupon for ${user.name}`,
-      discountType: 'percentage',
-      discountValue,
-      validUntil,
-      userSpecific: true,
-      userId,
-      usageLimit: 1,
-      perUserLimit: 1
-    });
-
-    await coupon.save();
-
-    user.coupons = user.coupons || [];
-    user.coupons.push({
-      code,
-      discountPercent: discountValue,
-      expiresAt: validUntil
-    });
-    await user.save();
-
-    res.json({ coupon, user });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.post('/api/coupons/bulk-generate', async (req, res) => {
-  try {
-    const { count, discountType, discountValue, validDays } = req.body;
-    const coupons = [];
-    for (let i = 0; i < count; i++) {
-      const code = `BULK-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-      const validUntil = new Date();
-      validUntil.setDate(validUntil.getDate() + validDays);
-      coupons.push({
-        code,
-        name: 'Bulk Generated Coupon',
-        discountType,
-        discountValue,
-        validUntil,
-        usageLimit: 1,
-        perUserLimit: 1
-      });
-    }
-    await Coupon.insertMany(coupons);
-    res.json({ message: `${count} coupons generated successfully` });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ============ USER ROUTES ============
-app.get('/api/users', async (req, res) => {
-  try {
-    const users = await User.find().sort({ createdAt: -1 });
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/users/:id', async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/users', async (req, res) => {
-  try {
-    const hashedPassword = await bcrypt.hash(req.body.password, 10);
-    const user = new User({ ...req.body, password: hashedPassword });
-    await user.save();
-    res.status(201).json(user);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.put('/api/users/:id', async (req, res) => {
-  try {
-    const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(user);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.delete('/api/users/:id', async (req, res) => {
-  try {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ message: 'User deleted' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.patch('/api/users/:id/toggle', async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id);
-    user.isActive = !user.isActive;
-    await user.save();
-    res.json({ isActive: user.isActive });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/users/:id/wallet', async (req, res) => {
-  try {
-    const { amount, description, expiresInDays } = req.body;
-    const user = await User.findById(req.params.id);
-    user.wallet = user.wallet || { balance: 0, transactions: [] };
-    user.wallet.balance += amount;
-    user.wallet.transactions.push({
-      amount,
-      type: 'credit',
-      description,
-      expiresAt: expiresInDays ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000) : null
-    });
-    await user.save();
-    res.json({ balance: user.wallet.balance });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ============ AUTH ROUTES ============
-
-// ✅ DUPLICATE CHECK ROUTE
-app.post('/api/auth/check-duplicate', async (req, res) => {
-  try {
-    const { email, phone } = req.body;
-    
-    if (email) {
-      const user = await User.findOne({ email });
-      if (user) {
-        return res.json({ exists: true, field: 'email' });
-      }
-    }
-    
-    if (phone) {
-      const user = await User.findOne({ phone });
-      if (user) {
-        return res.json({ exists: true, field: 'phone' });
-      }
-    }
-    
-    res.json({ exists: false });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ SIGNUP
-app.post('/api/auth/signup', async (req, res) => {
-  try {
-    const { name, email, phone, password, gender, dob, avatar } = req.body;
-    
-    if (!name || !email || !phone || !password) {
-      return res.status(400).json({ error: 'Name, email, phone, and password are required' });
-    }
-    
-    const existingEmail = await User.findOne({ email });
-    if (existingEmail) {
-      return res.status(400).json({ 
-        error: 'This email is already registered. Please login instead.',
-        field: 'email'
-      });
-    }
-    
-    const existingPhone = await User.findOne({ phone });
-    if (existingPhone) {
-      return res.status(400).json({ 
-        error: 'This phone number is already registered. Please login instead.',
-        field: 'phone'
-      });
-    }
-    
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
-    const user = new User({
-      name,
-      email,
-      phone,
-      password: hashedPassword,
-      gender: gender || '',
-      dob: dob || null,
-      avatar: avatar || '',
-      phoneVerified: true,
-      emailVerified: true,
-      isActive: true
-    });
-    
-    await user.save();
-    
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-    
-    res.status(201).json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        refId: user.refId,
-        referralCode: user.referralCode,
-        role: user.role,
-        gender: user.gender,
-        dob: user.dob,
-        avatar: user.avatar,
-        wallet: user.wallet || { balance: 0, transactions: [] },
-        addresses: user.addresses || [],
-        orderIds: user.orderIds || [],
-        isProfileComplete: user.isProfileComplete || false
-      }
-    });
-  } catch (err) {
-    console.error('Signup error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ✅ LOGIN (Email or Phone + Password)
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, phone, password } = req.body;
-    
-    if (!password) {
-      return res.status(400).json({ error: 'Password is required' });
-    }
-    
-    let user = null;
-    
-    if (phone) {
-      const cleanPhone = phone.replace(/\D/g, '');
-      user = await User.findOne({ phone: cleanPhone });
-    } else if (email) {
-      user = await User.findOne({ email });
-    } else {
-      return res.status(400).json({ error: 'Email or phone is required' });
-    }
-    
-    if (!user) {
-      return res.status(401).json({ error: 'Account not found. Please sign up first.' });
-    }
-    
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) {
-      return res.status(401).json({ error: 'Invalid password' });
-    }
-    
-    user.lastLogin = new Date();
-    await user.save();
-    
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-    
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        refId: user.refId,
-        referralCode: user.referralCode,
-        role: user.role,
-        gender: user.gender,
-        dob: user.dob,
-        avatar: user.avatar,
-        wallet: user.wallet || { balance: 0, transactions: [] },
-        addresses: user.addresses || [],
-        orderIds: user.orderIds || [],
-        isProfileComplete: user.isProfileComplete || false
-      }
-    });
-  } catch (err) {
-    console.error('Login error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ✅ PHONE LOGIN (Legacy)
-app.post('/api/auth/phone-login', async (req, res) => {
-  try {
-    const { phone, uid } = req.body;
-    
-    if (!phone) {
-      return res.status(400).json({ error: 'Phone number is required' });
-    }
-    
-    let user = await User.findOne({ phone });
-    
-    if (!user) {
-      const randomPassword = Math.random().toString(36).slice(-8);
-      const hashedPassword = await bcrypt.hash(randomPassword, 10);
-      const email = `user_${phone.replace(/[^0-9]/g, '')}@phone.loop.in`;
-      
-      user = new User({
-        name: `User_${phone.slice(-4)}`,
-        email: email,
-        phone: phone,
-        password: hashedPassword,
-        phoneVerified: true,
-        emailVerified: true,
-        isActive: true,
-        addresses: [],
-        orderIds: [],
-        reviewIds: []
-      });
-      await user.save();
-      console.log('✅ New user created from phone:', user._id);
-    }
-    
-    user.lastLogin = new Date();
-    await user.save();
-    
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-    
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        refId: user.refId,
-        referralCode: user.referralCode,
-        role: user.role,
-        wallet: user.wallet || { balance: 0, transactions: [] },
-        addresses: user.addresses || [],
-        orderIds: user.orderIds || []
-      }
-    });
-  } catch (err) {
-    console.error('Phone login error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ UPDATE PROFILE
-app.put('/api/auth/profile', authMiddleware, async (req, res) => {
-  try {
-    const { gender, dob, avatar, name, phone, avatarBg } = req.body;
-    const userId = req.userId;
-    
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    if (gender !== undefined) user.gender = gender;
-    if (dob !== undefined) user.dob = dob;
-    if (avatar !== undefined) user.avatar = avatar;
-    if (avatarBg !== undefined) user.avatarBg = avatarBg;
-    if (name !== undefined) user.name = name;
-    if (phone !== undefined) user.phone = phone;
-    
-    if (gender || dob) {
-      user.isProfileComplete = true;
-    }
-    
-    await user.save();
-    
-    res.json({
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        refId: user.refId,
-        referralCode: user.referralCode,
-        role: user.role,
-        gender: user.gender,
-        dob: user.dob,
-        avatar: user.avatar,
-        avatarBg: user.avatarBg,
-        wallet: user.wallet || { balance: 0, transactions: [] },
-        addresses: user.addresses || [],
-        orderIds: user.orderIds || [],
-        isProfileComplete: user.isProfileComplete || false
-      }
-    });
-  } catch (err) {
-    console.error('Profile update error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ✅ GET PROFILE
-app.get('/api/auth/profile', authMiddleware, async (req, res) => {
-  try {
-    const user = await User.findById(req.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ✅ GET USER
-app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  try {
-    if (!req.userId) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-    const user = await User.findById(req.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json(user);
-  } catch (err) {
-    console.error('Get me error:', err);
-    res.status(401).json({ error: 'Invalid token' });
-  }
-});
-
-app.post('/api/auth/forgot-password', async (req, res) => {
-  try {
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ error: 'Email not found' });
-    }
-    res.json({ 
-      message: 'Password reset link sent to your email',
-      success: true 
-    });
-  } catch (err) {
-    console.error('Forgot password error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ============ REFERRAL ROUTES ============
-
-app.get('/api/referral/settings', async (req, res) => {
-  try {
-    const ReferralSettings = require('./models/ReferralSettings');
-    const settings = await ReferralSettings.getSettings();
-    res.json({
-      isEnabled: settings.isEnabled,
-      rewardAmount: settings.rewardAmount,
-      minimumOrderValue: settings.minimumOrderValue,
-      welcomeBonus: settings.welcomeBonus,
-      rewardDescription: settings.rewardDescription,
-      maxReferralsPerUser: settings.maxReferralsPerUser
-    });
-  } catch (err) {
-    console.error('Get referral settings error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/referral/settings', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const ReferralSettings = require('./models/ReferralSettings');
-    const settings = await ReferralSettings.getSettings();
-    const { isEnabled, rewardAmount, minimumOrderValue, rewardDescription, welcomeBonus, maxReferralsPerUser } = req.body;
-    
-    if (isEnabled !== undefined) settings.isEnabled = isEnabled;
-    if (rewardAmount !== undefined) settings.rewardAmount = rewardAmount;
-    if (minimumOrderValue !== undefined) settings.minimumOrderValue = minimumOrderValue;
-    if (rewardDescription !== undefined) settings.rewardDescription = rewardDescription;
-    if (welcomeBonus !== undefined) settings.welcomeBonus = welcomeBonus;
-    if (maxReferralsPerUser !== undefined) settings.maxReferralsPerUser = maxReferralsPerUser;
-    
-    settings.updatedAt = new Date();
-    settings.updatedBy = req.userId;
-    await settings.save();
-    
-    res.json({ message: '✅ Referral settings updated successfully', settings });
-  } catch (err) {
-    console.error('Update referral settings error:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.get('/api/referral/my-info', authMiddleware, async (req, res) => {
-  try {
-    const user = await User.findById(req.userId)
-      .populate('referrals.userId', 'name email phone')
-      .populate('referrals.orderId', 'orderId total status');
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const ReferralSettings = require('./models/ReferralSettings');
-    const settings = await ReferralSettings.getSettings();
-    
-    const totalEarned = user.referrals
-      .filter(r => r.status === 'paid')
-      .reduce((sum, r) => sum + r.rewardAmount, 0);
-    
-    const pendingEarnings = user.referrals
-      .filter(r => r.status === 'pending')
-      .reduce((sum, r) => sum + r.rewardAmount, 0);
-    
-    const frontendUrl = process.env.FRONTEND_URL || 'https://loopstore.in';
-    
-    res.json({
-      referralCode: user.referralCode,
-      totalReferrals: user.referrals.length,
-      totalEarned,
-      pendingEarnings,
-      walletBalance: user.wallet?.balance || 0,
-      referralLink: `${frontendUrl}?ref=${user.referralCode}`,
-      referrals: user.referrals,
-      settings: {
-        rewardAmount: settings.rewardAmount,
-        minimumOrderValue: settings.minimumOrderValue,
-        welcomeBonus: settings.welcomeBonus,
-        isEnabled: settings.isEnabled
-      }
-    });
-  } catch (err) {
-    console.error('Get referral info error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/referral/track-click', async (req, res) => {
-  try {
-    const { referralCode } = req.body;
-    console.log(`📊 Referral click tracked: ${referralCode}`);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Track referral click error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/referral/apply', authMiddleware, async (req, res) => {
-  try {
-    const { referralCode } = req.body;
-    const userId = req.userId;
-    
-    if (!referralCode) {
-      return res.status(400).json({ error: 'Referral code is required' });
-    }
-    
-    const referrer = await User.findOne({ referralCode: referralCode.toUpperCase() });
-    if (!referrer) {
-      return res.status(404).json({ error: 'Invalid referral code' });
-    }
-    
-    if (referrer._id.toString() === userId) {
-      return res.status(400).json({ error: 'You cannot refer yourself' });
-    }
-    
-    const user = await User.findById(userId);
-    if (user.referredBy) {
-      return res.status(400).json({ error: 'You have already been referred' });
-    }
-    
-    user.referredBy = referrer._id;
-    await user.save();
-    
-    res.json({ 
-      success: true, 
-      message: `✅ Referral code ${referralCode} applied! You'll get a bonus on your first order.`,
-      referrerName: referrer.name
-    });
-  } catch (err) {
-    console.error('Apply referral error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
-  try {
-    const { orderId } = req.body;
-    const userId = req.userId;
-    
-    const ReferralSettings = require('./models/ReferralSettings');
-    const settings = await ReferralSettings.getSettings();
-    
-    if (!settings.isEnabled) {
-      return res.status(400).json({ error: 'Referral program is currently disabled' });
-    }
-    
-    const user = await User.findById(userId);
-    const order = await Order.findById(orderId);
-    
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-    
-    if (order.total < settings.minimumOrderValue) {
-      return res.status(400).json({ 
-        error: `Minimum order value of ₹${settings.minimumOrderValue} required for referral reward` 
-      });
-    }
-    
-    if (user.hasClaimedReferral) {
-      return res.status(400).json({ error: 'You have already claimed your referral bonus' });
-    }
-    
-    if (!user.referredBy) {
-      return res.status(400).json({ error: 'You were not referred by anyone' });
-    }
-    
-    const referrer = await User.findById(user.referredBy);
-    if (!referrer) {
-      return res.status(404).json({ error: 'Referrer not found' });
-    }
-    
-    const alreadyRewarded = referrer.referrals.some(r => 
-      r.userId.toString() === userId && r.status === 'paid'
-    );
-    
-    if (alreadyRewarded) {
-      return res.status(400).json({ error: 'Referral reward already processed' });
-    }
-    
-    const rewardAmount = settings.rewardAmount;
-    
-    referrer.wallet.balance += rewardAmount;
-    referrer.wallet.transactions.push({
-      amount: rewardAmount,
-      type: 'credit',
-      description: `Referral reward for ${user.name} (${user.phone}) - Order #${order.orderId}`
-    });
-    
-    referrer.referrals.push({
-      userId: user._id,
-      orderId: order._id,
-      rewardAmount: rewardAmount,
-      status: 'paid',
-      rewardedAt: new Date()
-    });
-    
-    await referrer.save();
-    
-    user.hasClaimedReferral = true;
-    await user.save();
-    
-    if (settings.welcomeBonus > 0) {
-      user.wallet.balance += settings.welcomeBonus;
-      user.wallet.transactions.push({
-        amount: settings.welcomeBonus,
-        type: 'credit',
-        description: '🎉 Welcome bonus!'
-      });
-      await user.save();
-    }
-    
-    res.json({
-      success: true,
-      message: `🎉 You earned ₹${rewardAmount} referral reward!`,
-      referrer: {
-        name: referrer.name,
-        reward: rewardAmount
-      },
-      newBalance: referrer.wallet.balance
-    });
-  } catch (err) {
-    console.error('Process referral reward error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/referral/leaderboard', async (req, res) => {
-  try {
-    const topReferrers = await User.find({
-      'referrals.status': 'paid'
-    })
-    .select('name referralCode referrals wallet.balance')
-    .sort({ 'referrals': -1 })
-    .limit(10);
-    
-    const leaderboard = topReferrers.map(user => ({
-      name: user.name,
-      referralCode: user.referralCode,
-      totalReferrals: user.referrals.filter(r => r.status === 'paid').length,
-      totalEarned: user.referrals
-        .filter(r => r.status === 'paid')
-        .reduce((sum, r) => sum + r.rewardAmount, 0)
-    }));
-    
-    res.json(leaderboard);
-  } catch (err) {
-    console.error('Get leaderboard error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const ReferralSettings = require('./models/ReferralSettings');
-    const settings = await ReferralSettings.getSettings();
-    
-    const totalReferrals = await User.aggregate([
-      { $unwind: '$referrals' },
-      { $group: { _id: null, total: { $sum: 1 } } }
-    ]);
-    
-    const totalPaid = await User.aggregate([
-      { $unwind: '$referrals' },
-      { $match: { 'referrals.status': 'paid' } },
-      { $group: { _id: null, total: { $sum: 1 } } }
-    ]);
-    
-    const totalEarned = await User.aggregate([
-      { $unwind: '$referrals' },
-      { $match: { 'referrals.status': 'paid' } },
-      { $group: { _id: null, total: { $sum: '$referrals.rewardAmount' } } }
-    ]);
-    
-    const topReferrers = await User.find({
-      'referrals.status': 'paid'
-    })
-    .select('name referralCode referrals')
-    .sort({ 'referrals': -1 })
-    .limit(5);
-    
-    res.json({
-      settings,
-      stats: {
-        totalReferrals: totalReferrals[0]?.total || 0,
-        totalPaid: totalPaid[0]?.total || 0,
-        totalEarned: totalEarned[0]?.total || 0,
-        pendingReferrals: (totalReferrals[0]?.total || 0) - (totalPaid[0]?.total || 0)
-      },
-      topReferrers: topReferrers.map(u => ({
-        name: u.name,
-        referralCode: u.referralCode,
-        count: u.referrals.filter(r => r.status === 'paid').length
-      }))
-    });
-  } catch (err) {
-    console.error('Get referral analytics error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============ END AUTH & REFERRAL ROUTES ============
-
-// ============ PAYMENT METHOD ROUTES ============
-
-app.get('/api/payment-methods', async (req, res) => {
-  try {
-    const methods = await PaymentMethod.find().sort({ createdAt: -1 });
-    res.json(methods);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/payment-methods/active', async (req, res) => {
-  try {
-    const active = await PaymentMethod.findOne({ isActive: true });
-    res.json(active || null);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/payment-methods', async (req, res) => {
-  try {
-    const { upiId, qrCode, name } = req.body;
-    const method = new PaymentMethod({ upiId, qrCode, name });
-    await method.save();
-    res.status(201).json(method);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.put('/api/payment-methods/:id', async (req, res) => {
-  try {
-    const { isActive } = req.body;
-    if (isActive) {
-      await PaymentMethod.updateMany({}, { isActive: false });
-    }
-    const method = await PaymentMethod.findByIdAndUpdate(
-      req.params.id,
-      { isActive },
-      { new: true }
-    );
-    res.json(method);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.delete('/api/payment-methods/:id', async (req, res) => {
-  try {
-    await PaymentMethod.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Payment method deleted' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================
-// ✅ RAZORPAY PAYMENT ROUTES
+// ✅ RAZORPAY PAYMENT ROUTES - FIXED
 // ============================================
 
 // ✅ Create Razorpay Order
 app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
   try {
+    // Check if Razorpay is initialized
     if (!razorpay) {
-      return res.status(503).json({ error: 'Razorpay is not configured. Please add API keys.' });
+      console.error('❌ Razorpay not initialized');
+      return res.status(503).json({ 
+        error: 'Razorpay is not configured. Please add API keys.',
+        details: 'Payment service temporarily unavailable'
+      });
     }
     
     const { amount, orderId } = req.body;
     
+    // Validate amount
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+    
     const options = {
-      amount: amount * 100,
+      amount: Math.round(amount * 100), // Convert to paise
       currency: 'INR',
-      receipt: orderId,
+      receipt: orderId || `order_${Date.now()}`,
       payment_capture: 1
     };
     
+    console.log('📦 Creating Razorpay order:', { amount, orderId });
+    
     const order = await razorpay.orders.create(options);
+    console.log('✅ Razorpay order created:', order.id);
+    
     res.json(order);
   } catch (err) {
-    console.error('Razorpay order error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('❌ Razorpay order error:', err);
+    res.status(500).json({ 
+      error: 'Failed to create payment order',
+      details: err.message 
+    });
   }
 });
 
@@ -2032,7 +677,7 @@ app.get('/api/admin/analytics/dashboard', authMiddleware, adminMiddleware, async
 });
 
 // ============================================
-// ✅ PDF INVOICE GENERATOR - UPDATED
+// ✅ PDF INVOICE GENERATOR
 // ============================================
 
 const generateInvoice = (order) => {
@@ -2138,16 +783,15 @@ const generateInvoice = (order) => {
 app.get('/sitemap.xml', async (req, res) => {
   try {
     const products = await Product.find().select('productId updatedAt');
+    const Category = require('./models/Category');
     const categories = await Category.find().select('slug');
     const FRONTEND_URL = process.env.FRONTEND_URL || 'https://loopstore.in';
     
     let sitemap = `<?xml version="1.0" encoding="UTF-8"?>
     <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
     
-    // Homepage
     sitemap += `<url><loc>${FRONTEND_URL}/</loc><priority>1.0</priority><changefreq>daily</changefreq></url>`;
     
-    // Products
     products.forEach(p => {
       sitemap += `<url><loc>${FRONTEND_URL}/product/${p.productId}</loc>
         <lastmod>${p.updatedAt.toISOString().split('T')[0]}</lastmod>
@@ -2155,7 +799,6 @@ app.get('/sitemap.xml', async (req, res) => {
         <changefreq>weekly</changefreq></url>`;
     });
     
-    // Categories
     categories.forEach(c => {
       sitemap += `<url><loc>${FRONTEND_URL}/category/${c.slug}</loc>
         <priority>0.6</priority>
@@ -2173,7 +816,1336 @@ app.get('/sitemap.xml', async (req, res) => {
 });
 
 // ============================================
-// ✅ START SERVER
+// ✅ MARKETING ROUTES
+// ============================================
+
+app.get('/api/marketing/analytics', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { period } = req.query;
+    let days = 7;
+    if (period === 'today') days = 1;
+    if (period === '30days') days = 30;
+    if (period === '90days') days = 90;
+    
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    
+    const orders = await Order.find({
+      createdAt: { $gte: startDate },
+      paymentStatus: 'paid'
+    });
+    
+    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
+    
+    const visitors = await AnalyticsEvent.distinct('visitorId', {
+      timestamp: { $gte: startDate }
+    });
+    
+    const topProducts = await Order.aggregate([
+      { $match: { paymentStatus: 'paid', createdAt: { $gte: startDate } } },
+      { $unwind: '$items' },
+      { $group: {
+        _id: '$items.productId',
+        name: { $first: '$items.name' },
+        totalSold: { $sum: '$items.quantity' },
+        revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }
+      }},
+      { $sort: { totalSold: -1 } },
+      { $limit: 10 }
+    ]);
+    
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayVisitors = await AnalyticsEvent.distinct('visitorId', {
+      timestamp: { $gte: todayStart }
+    });
+    
+    const visitorCount = visitors.length || 0;
+    const orderCount = orders.length || 0;
+    const conversionRate = visitorCount > 0 ? (orderCount / visitorCount) * 100 : 0;
+    
+    const trafficSources = {
+      facebook: 0,
+      instagram: 0,
+      google: 0,
+      direct: 0
+    };
+    
+    const productViews = await AnalyticsEvent.countDocuments({
+      eventType: 'product_view',
+      timestamp: { $gte: startDate }
+    });
+    
+    const addToCartEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'add_to_cart',
+      timestamp: { $gte: startDate }
+    });
+    
+    const checkoutEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'initiate_checkout',
+      timestamp: { $gte: startDate }
+    });
+    
+    const purchaseEvents = orderCount;
+    
+    const totalEvents = productViews + addToCartEvents + checkoutEvents + purchaseEvents || 1;
+    
+    const pixelEvents = [
+      { 
+        event: 'ViewContent', 
+        count: productViews, 
+        percentage: Math.round((productViews / totalEvents) * 100) || 0 
+      },
+      { 
+        event: 'AddToCart', 
+        count: addToCartEvents, 
+        percentage: Math.round((addToCartEvents / totalEvents) * 100) || 0 
+      },
+      { 
+        event: 'InitiateCheckout', 
+        count: checkoutEvents, 
+        percentage: Math.round((checkoutEvents / totalEvents) * 100) || 0 
+      },
+      { 
+        event: 'Purchase', 
+        count: purchaseEvents, 
+        percentage: visitorCount > 0 ? Math.round((purchaseEvents / visitorCount) * 100) : 0 
+      }
+    ];
+    
+    const campaigns = [];
+    
+    res.json({
+      visitors: {
+        total: visitorCount,
+        today: todayVisitors.length || 0,
+        week: visitorCount
+      },
+      conversions: {
+        total: orderCount,
+        rate: Math.round(conversionRate * 10) / 10,
+        bySource: trafficSources
+      },
+      revenue: {
+        total: totalRevenue,
+        period: days
+      },
+      topProducts: topProducts.map(p => ({
+        ...p,
+        name: p.name || 'Unknown Product',
+        revenue: p.revenue || 0
+      })),
+      campaigns,
+      pixelEvents,
+      period: days
+    });
+    
+  } catch (err) {
+    console.error('Marketing analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/marketing/overview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const todayOrders = await Order.countDocuments({
+      createdAt: { $gte: today },
+      paymentStatus: 'paid'
+    });
+    
+    const todayRevenue = await Order.aggregate([
+      { 
+        $match: { 
+          createdAt: { $gte: today },
+          paymentStatus: 'paid' 
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$total' } } }
+    ]);
+    
+    const todayVisitors = await AnalyticsEvent.distinct('visitorId', {
+      timestamp: { $gte: today }
+    });
+    
+    const totalOrders = await Order.countDocuments({ paymentStatus: 'paid' });
+    
+    const totalRevenue = await Order.aggregate([
+      { $match: { paymentStatus: 'paid' } },
+      { $group: { _id: null, total: { $sum: '$total' } } }
+    ]);
+    
+    const totalVisitors = await AnalyticsEvent.distinct('visitorId');
+    
+    res.json({
+      today: {
+        orders: todayOrders,
+        revenue: todayRevenue[0]?.total || 0,
+        visitors: todayVisitors.length
+      },
+      total: {
+        orders: totalOrders,
+        revenue: totalRevenue[0]?.total || 0,
+        visitors: totalVisitors.length
+      }
+    });
+  } catch (err) {
+    console.error('Marketing overview error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/marketing/pixel-events', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { days = 7 } = req.query;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(days));
+    
+    const totalVisitors = await AnalyticsEvent.distinct('visitorId', {
+      timestamp: { $gte: startDate }
+    });
+    
+    const purchases = await Order.countDocuments({
+      createdAt: { $gte: startDate },
+      paymentStatus: 'paid'
+    });
+    
+    const productViews = await AnalyticsEvent.countDocuments({
+      eventType: 'product_view',
+      timestamp: { $gte: startDate }
+    });
+    
+    const addToCartEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'add_to_cart',
+      timestamp: { $gte: startDate }
+    });
+    
+    const checkoutEvents = await AnalyticsEvent.countDocuments({
+      eventType: 'initiate_checkout',
+      timestamp: { $gte: startDate }
+    });
+    
+    const totalEvents = productViews + addToCartEvents + checkoutEvents + purchases || 1;
+    const visitorCount = totalVisitors.length || 0;
+    
+    res.json({
+      events: [
+        { 
+          event: 'ViewContent', 
+          count: productViews || 0, 
+          percentage: Math.round((productViews / totalEvents) * 100) || 0 
+        },
+        { 
+          event: 'AddToCart', 
+          count: addToCartEvents || 0, 
+          percentage: Math.round((addToCartEvents / totalEvents) * 100) || 0 
+        },
+        { 
+          event: 'InitiateCheckout', 
+          count: checkoutEvents || 0, 
+          percentage: Math.round((checkoutEvents / totalEvents) * 100) || 0 
+        },
+        { 
+          event: 'Purchase', 
+          count: purchases || 0, 
+          percentage: visitorCount > 0 ? Math.round((purchases / visitorCount) * 100) : 0 
+        }
+      ],
+      period: parseInt(days)
+    });
+  } catch (err) {
+    console.error('Pixel events error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/marketing/track-utm', async (req, res) => {
+  try {
+    const { utm_source, utm_medium, utm_campaign, utm_term, utm_content, visitorId, userId } = req.body;
+    
+    const UTMTracking = require('./models/UTMTracking');
+    const track = new UTMTracking({
+      visitorId: visitorId || 'unknown',
+      userId: userId || null,
+      utm_source: utm_source || '',
+      utm_medium: utm_medium || '',
+      utm_campaign: utm_campaign || '',
+      utm_term: utm_term || '',
+      utm_content: utm_content || '',
+      timestamp: new Date()
+    });
+    await track.save();
+    
+    res.json({ success: true, message: 'UTM tracked successfully' });
+  } catch (err) {
+    console.error('UTM tracking error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// PRODUCT ROUTES
+// ============================================
+
+app.get('/api/products', async (req, res) => {
+  try {
+    const products = await Product.find().sort({ createdAt: -1 });
+    res.json(products);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/products/:slug', async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    let product = null;
+
+    product = await Product.findOne({ productId: slug });
+    if (!product && mongoose.Types.ObjectId.isValid(slug)) {
+      product = await Product.findById(slug);
+    }
+    if (!product) {
+      const nameSlug = slug.replace(/-/g, ' ');
+      product = await Product.findOne({
+        name: { $regex: new RegExp(`^${nameSlug}$`, 'i') }
+      });
+    }
+    if (!product) {
+      product = await Product.findOne({
+        name: { $regex: new RegExp(slug.replace(/-/g, ' '), 'i') }
+      });
+    }
+
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    res.json(product);
+  } catch (err) {
+    console.error('Error fetching product:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/products/id/:id', async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    res.json(product);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/products', async (req, res) => {
+  try {
+    if (req.body.productId) {
+      const existing = await Product.findOne({ productId: req.body.productId });
+      if (existing) {
+        return res.status(400).json({ error: 'Product ID already exists. Please use a different ID.' });
+      }
+    }
+    const product = new Product(req.body);
+    await product.save();
+    res.status(201).json(product);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/products/:id', async (req, res) => {
+  try {
+    if (req.body.productId) {
+      const existing = await Product.findOne({
+        productId: req.body.productId,
+        _id: { $ne: req.params.id }
+      });
+      if (existing) {
+        return res.status(400).json({ error: 'Product ID already exists. Please use a different ID.' });
+      }
+    }
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    res.json(product);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/products/:id', async (req, res) => {
+  try {
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    res.json({ message: 'Product deleted successfully', productId: req.params.id });
+  } catch (err) {
+    console.error('Error deleting product:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/products/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    product.status = status;
+    product.isActive = status === 'active';
+    await product.save();
+    res.json({ message: `Product status updated to ${status}`, product });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// COUPON ROUTES
+// ============================================
+
+app.get('/api/coupons', async (req, res) => {
+  try {
+    const coupons = await Coupon.find().sort({ createdAt: -1 });
+    res.json(coupons);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/coupons/:id', async (req, res) => {
+  try {
+    const coupon = await Coupon.findById(req.params.id);
+    if (!coupon) return res.status(404).json({ error: 'Coupon not found' });
+    res.json(coupon);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/coupons', async (req, res) => {
+  try {
+    const coupon = new Coupon(req.body);
+    await coupon.save();
+    res.status(201).json(coupon);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/coupons/:id', async (req, res) => {
+  try {
+    const coupon = await Coupon.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json(coupon);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/coupons/:id', async (req, res) => {
+  try {
+    await Coupon.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Coupon deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/coupons/:id/toggle', async (req, res) => {
+  try {
+    const coupon = await Coupon.findById(req.params.id);
+    coupon.isActive = !coupon.isActive;
+    await coupon.save();
+    res.json({ isActive: coupon.isActive });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/coupons/validate', async (req, res) => {
+  try {
+    const { code, userId, cartTotal } = req.body;
+    const coupon = await Coupon.findOne({ code, isActive: true, isDeleted: false });
+
+    if (!coupon) {
+      return res.status(404).json({ valid: false, message: 'Invalid coupon code' });
+    }
+
+    const now = new Date();
+    if (coupon.validUntil && now > coupon.validUntil) {
+      return res.status(400).json({ valid: false, message: 'Coupon has expired' });
+    }
+
+    if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
+      return res.status(400).json({ valid: false, message: 'Coupon usage limit reached' });
+    }
+
+    if (coupon.userSpecific && coupon.userId.toString() !== userId) {
+      return res.status(400).json({ valid: false, message: 'This coupon is not valid for your account' });
+    }
+
+    if (coupon.minOrderValue > 0 && cartTotal < coupon.minOrderValue) {
+      return res.status(400).json({
+        valid: false,
+        message: `Minimum order of ₹${coupon.minOrderValue} required`
+      });
+    }
+
+    let discountAmount = 0;
+    if (coupon.discountType === 'percentage') {
+      discountAmount = (cartTotal * coupon.discountValue) / 100;
+      if (coupon.maxDiscount > 0 && discountAmount > coupon.maxDiscount) {
+        discountAmount = coupon.maxDiscount;
+      }
+    } else if (coupon.discountType === 'fixed') {
+      discountAmount = coupon.discountValue;
+    }
+
+    res.json({
+      valid: true,
+      discountAmount,
+      discountPercent: coupon.discountType === 'percentage' ? coupon.discountValue : 0,
+      message: 'Coupon applied successfully'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/coupons/assign-to-user', async (req, res) => {
+  try {
+    const { userId, discountValue, validDays, reason } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const code = `INSTA-${user.refId || user.name.substring(0,4).toUpperCase()}-${discountValue}`;
+    const validUntil = new Date();
+    validUntil.setDate(validUntil.getDate() + validDays);
+
+    const coupon = new Coupon({
+      code,
+      name: `${reason} Reward`,
+      description: `Special ${discountValue}% off coupon for ${user.name}`,
+      discountType: 'percentage',
+      discountValue,
+      validUntil,
+      userSpecific: true,
+      userId,
+      usageLimit: 1,
+      perUserLimit: 1
+    });
+
+    await coupon.save();
+
+    user.coupons = user.coupons || [];
+    user.coupons.push({
+      code,
+      discountPercent: discountValue,
+      expiresAt: validUntil
+    });
+    await user.save();
+
+    res.json({ coupon, user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/coupons/bulk-generate', async (req, res) => {
+  try {
+    const { count, discountType, discountValue, validDays } = req.body;
+    const coupons = [];
+    for (let i = 0; i < count; i++) {
+      const code = `BULK-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      const validUntil = new Date();
+      validUntil.setDate(validUntil.getDate() + validDays);
+      coupons.push({
+        code,
+        name: 'Bulk Generated Coupon',
+        discountType,
+        discountValue,
+        validUntil,
+        usageLimit: 1,
+        perUserLimit: 1
+      });
+    }
+    await Coupon.insertMany(coupons);
+    res.json({ message: `${count} coupons generated successfully` });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================
+// USER ROUTES
+// ============================================
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find().sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/users', async (req, res) => {
+  try {
+    const hashedPassword = await bcrypt.hash(req.body.password, 10);
+    const user = new User({ ...req.body, password: hashedPassword });
+    await user.save();
+    res.status(201).json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: 'User deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/users/:id/toggle', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    user.isActive = !user.isActive;
+    await user.save();
+    res.json({ isActive: user.isActive });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/users/:id/wallet', async (req, res) => {
+  try {
+    const { amount, description, expiresInDays } = req.body;
+    const user = await User.findById(req.params.id);
+    user.wallet = user.wallet || { balance: 0, transactions: [] };
+    user.wallet.balance += amount;
+    user.wallet.transactions.push({
+      amount,
+      type: 'credit',
+      description,
+      expiresAt: expiresInDays ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000) : null
+    });
+    await user.save();
+    res.json({ balance: user.wallet.balance });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================
+// AUTH ROUTES
+// ============================================
+
+app.post('/api/auth/check-duplicate', async (req, res) => {
+  try {
+    const { email, phone } = req.body;
+    
+    if (email) {
+      const user = await User.findOne({ email });
+      if (user) {
+        return res.json({ exists: true, field: 'email' });
+      }
+    }
+    
+    if (phone) {
+      const user = await User.findOne({ phone });
+      if (user) {
+        return res.json({ exists: true, field: 'phone' });
+      }
+    }
+    
+    res.json({ exists: false });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { name, email, phone, password, gender, dob, avatar } = req.body;
+    
+    if (!name || !email || !phone || !password) {
+      return res.status(400).json({ error: 'Name, email, phone, and password are required' });
+    }
+    
+    const existingEmail = await User.findOne({ email });
+    if (existingEmail) {
+      return res.status(400).json({ 
+        error: 'This email is already registered. Please login instead.',
+        field: 'email'
+      });
+    }
+    
+    const existingPhone = await User.findOne({ phone });
+    if (existingPhone) {
+      return res.status(400).json({ 
+        error: 'This phone number is already registered. Please login instead.',
+        field: 'phone'
+      });
+    }
+    
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    const user = new User({
+      name,
+      email,
+      phone,
+      password: hashedPassword,
+      gender: gender || '',
+      dob: dob || null,
+      avatar: avatar || '',
+      phoneVerified: true,
+      emailVerified: true,
+      isActive: true
+    });
+    
+    await user.save();
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role,
+        gender: user.gender,
+        dob: user.dob,
+        avatar: user.avatar,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || [],
+        isProfileComplete: user.isProfileComplete || false
+      }
+    });
+  } catch (err) {
+    console.error('Signup error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, phone, password } = req.body;
+    
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+    
+    let user = null;
+    
+    if (phone) {
+      const cleanPhone = phone.replace(/\D/g, '');
+      user = await User.findOne({ phone: cleanPhone });
+    } else if (email) {
+      user = await User.findOne({ email });
+    } else {
+      return res.status(400).json({ error: 'Email or phone is required' });
+    }
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Account not found. Please sign up first.' });
+    }
+    
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+    
+    user.lastLogin = new Date();
+    await user.save();
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role,
+        gender: user.gender,
+        dob: user.dob,
+        avatar: user.avatar,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || [],
+        isProfileComplete: user.isProfileComplete || false
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/phone-login', async (req, res) => {
+  try {
+    const { phone, uid } = req.body;
+    
+    if (!phone) {
+      return res.status(400).json({ error: 'Phone number is required' });
+    }
+    
+    let user = await User.findOne({ phone });
+    
+    if (!user) {
+      const randomPassword = Math.random().toString(36).slice(-8);
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+      const email = `user_${phone.replace(/[^0-9]/g, '')}@phone.loop.in`;
+      
+      user = new User({
+        name: `User_${phone.slice(-4)}`,
+        email: email,
+        phone: phone,
+        password: hashedPassword,
+        phoneVerified: true,
+        emailVerified: true,
+        isActive: true,
+        addresses: [],
+        orderIds: [],
+        reviewIds: []
+      });
+      await user.save();
+      console.log('✅ New user created from phone:', user._id);
+    }
+    
+    user.lastLogin = new Date();
+    await user.save();
+    
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || []
+      }
+    });
+  } catch (err) {
+    console.error('Phone login error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/auth/profile', authMiddleware, async (req, res) => {
+  try {
+    const { gender, dob, avatar, name, phone, avatarBg } = req.body;
+    const userId = req.userId;
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (gender !== undefined) user.gender = gender;
+    if (dob !== undefined) user.dob = dob;
+    if (avatar !== undefined) user.avatar = avatar;
+    if (avatarBg !== undefined) user.avatarBg = avatarBg;
+    if (name !== undefined) user.name = name;
+    if (phone !== undefined) user.phone = phone;
+    
+    if (gender || dob) {
+      user.isProfileComplete = true;
+    }
+    
+    await user.save();
+    
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        refId: user.refId,
+        referralCode: user.referralCode,
+        role: user.role,
+        gender: user.gender,
+        dob: user.dob,
+        avatar: user.avatar,
+        avatarBg: user.avatarBg,
+        wallet: user.wallet || { balance: 0, transactions: [] },
+        addresses: user.addresses || [],
+        orderIds: user.orderIds || [],
+        isProfileComplete: user.isProfileComplete || false
+      }
+    });
+  } catch (err) {
+    console.error('Profile update error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/auth/profile', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const user = await User.findById(req.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (err) {
+    console.error('Get me error:', err);
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: 'Email not found' });
+    }
+    res.json({ 
+      message: 'Password reset link sent to your email',
+      success: true 
+    });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ============================================
+// REFERRAL ROUTES
+// ============================================
+
+app.get('/api/referral/settings', async (req, res) => {
+  try {
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    res.json({
+      isEnabled: settings.isEnabled,
+      rewardAmount: settings.rewardAmount,
+      minimumOrderValue: settings.minimumOrderValue,
+      welcomeBonus: settings.welcomeBonus,
+      rewardDescription: settings.rewardDescription,
+      maxReferralsPerUser: settings.maxReferralsPerUser
+    });
+  } catch (err) {
+    console.error('Get referral settings error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/referral/settings', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    const { isEnabled, rewardAmount, minimumOrderValue, rewardDescription, welcomeBonus, maxReferralsPerUser } = req.body;
+    
+    if (isEnabled !== undefined) settings.isEnabled = isEnabled;
+    if (rewardAmount !== undefined) settings.rewardAmount = rewardAmount;
+    if (minimumOrderValue !== undefined) settings.minimumOrderValue = minimumOrderValue;
+    if (rewardDescription !== undefined) settings.rewardDescription = rewardDescription;
+    if (welcomeBonus !== undefined) settings.welcomeBonus = welcomeBonus;
+    if (maxReferralsPerUser !== undefined) settings.maxReferralsPerUser = maxReferralsPerUser;
+    
+    settings.updatedAt = new Date();
+    settings.updatedBy = req.userId;
+    await settings.save();
+    
+    res.json({ message: '✅ Referral settings updated successfully', settings });
+  } catch (err) {
+    console.error('Update referral settings error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/referral/my-info', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId)
+      .populate('referrals.userId', 'name email phone')
+      .populate('referrals.orderId', 'orderId total status');
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    
+    const totalEarned = user.referrals
+      .filter(r => r.status === 'paid')
+      .reduce((sum, r) => sum + r.rewardAmount, 0);
+    
+    const pendingEarnings = user.referrals
+      .filter(r => r.status === 'pending')
+      .reduce((sum, r) => sum + r.rewardAmount, 0);
+    
+    const frontendUrl = process.env.FRONTEND_URL || 'https://loopstore.in';
+    
+    res.json({
+      referralCode: user.referralCode,
+      totalReferrals: user.referrals.length,
+      totalEarned,
+      pendingEarnings,
+      walletBalance: user.wallet?.balance || 0,
+      referralLink: `${frontendUrl}?ref=${user.referralCode}`,
+      referrals: user.referrals,
+      settings: {
+        rewardAmount: settings.rewardAmount,
+        minimumOrderValue: settings.minimumOrderValue,
+        welcomeBonus: settings.welcomeBonus,
+        isEnabled: settings.isEnabled
+      }
+    });
+  } catch (err) {
+    console.error('Get referral info error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/referral/track-click', async (req, res) => {
+  try {
+    const { referralCode } = req.body;
+    console.log(`📊 Referral click tracked: ${referralCode}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Track referral click error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/referral/apply', authMiddleware, async (req, res) => {
+  try {
+    const { referralCode } = req.body;
+    const userId = req.userId;
+    
+    if (!referralCode) {
+      return res.status(400).json({ error: 'Referral code is required' });
+    }
+    
+    const referrer = await User.findOne({ referralCode: referralCode.toUpperCase() });
+    if (!referrer) {
+      return res.status(404).json({ error: 'Invalid referral code' });
+    }
+    
+    if (referrer._id.toString() === userId) {
+      return res.status(400).json({ error: 'You cannot refer yourself' });
+    }
+    
+    const user = await User.findById(userId);
+    if (user.referredBy) {
+      return res.status(400).json({ error: 'You have already been referred' });
+    }
+    
+    user.referredBy = referrer._id;
+    await user.save();
+    
+    res.json({ 
+      success: true, 
+      message: `✅ Referral code ${referralCode} applied! You'll get a bonus on your first order.`,
+      referrerName: referrer.name
+    });
+  } catch (err) {
+    console.error('Apply referral error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const userId = req.userId;
+    
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    
+    if (!settings.isEnabled) {
+      return res.status(400).json({ error: 'Referral program is currently disabled' });
+    }
+    
+    const user = await User.findById(userId);
+    const order = await Order.findById(orderId);
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    if (order.total < settings.minimumOrderValue) {
+      return res.status(400).json({ 
+        error: `Minimum order value of ₹${settings.minimumOrderValue} required for referral reward` 
+      });
+    }
+    
+    if (user.hasClaimedReferral) {
+      return res.status(400).json({ error: 'You have already claimed your referral bonus' });
+    }
+    
+    if (!user.referredBy) {
+      return res.status(400).json({ error: 'You were not referred by anyone' });
+    }
+    
+    const referrer = await User.findById(user.referredBy);
+    if (!referrer) {
+      return res.status(404).json({ error: 'Referrer not found' });
+    }
+    
+    const alreadyRewarded = referrer.referrals.some(r => 
+      r.userId.toString() === userId && r.status === 'paid'
+    );
+    
+    if (alreadyRewarded) {
+      return res.status(400).json({ error: 'Referral reward already processed' });
+    }
+    
+    const rewardAmount = settings.rewardAmount;
+    
+    referrer.wallet.balance += rewardAmount;
+    referrer.wallet.transactions.push({
+      amount: rewardAmount,
+      type: 'credit',
+      description: `Referral reward for ${user.name} (${user.phone}) - Order #${order.orderId}`
+    });
+    
+    referrer.referrals.push({
+      userId: user._id,
+      orderId: order._id,
+      rewardAmount: rewardAmount,
+      status: 'paid',
+      rewardedAt: new Date()
+    });
+    
+    await referrer.save();
+    
+    user.hasClaimedReferral = true;
+    await user.save();
+    
+    if (settings.welcomeBonus > 0) {
+      user.wallet.balance += settings.welcomeBonus;
+      user.wallet.transactions.push({
+        amount: settings.welcomeBonus,
+        type: 'credit',
+        description: '🎉 Welcome bonus!'
+      });
+      await user.save();
+    }
+    
+    res.json({
+      success: true,
+      message: `🎉 You earned ₹${rewardAmount} referral reward!`,
+      referrer: {
+        name: referrer.name,
+        reward: rewardAmount
+      },
+      newBalance: referrer.wallet.balance
+    });
+  } catch (err) {
+    console.error('Process referral reward error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/referral/leaderboard', async (req, res) => {
+  try {
+    const topReferrers = await User.find({
+      'referrals.status': 'paid'
+    })
+    .select('name referralCode referrals wallet.balance')
+    .sort({ 'referrals': -1 })
+    .limit(10);
+    
+    const leaderboard = topReferrers.map(user => ({
+      name: user.name,
+      referralCode: user.referralCode,
+      totalReferrals: user.referrals.filter(r => r.status === 'paid').length,
+      totalEarned: user.referrals
+        .filter(r => r.status === 'paid')
+        .reduce((sum, r) => sum + r.rewardAmount, 0)
+    }));
+    
+    res.json(leaderboard);
+  } catch (err) {
+    console.error('Get leaderboard error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const ReferralSettings = require('./models/ReferralSettings');
+    const settings = await ReferralSettings.getSettings();
+    
+    const totalReferrals = await User.aggregate([
+      { $unwind: '$referrals' },
+      { $group: { _id: null, total: { $sum: 1 } } }
+    ]);
+    
+    const totalPaid = await User.aggregate([
+      { $unwind: '$referrals' },
+      { $match: { 'referrals.status': 'paid' } },
+      { $group: { _id: null, total: { $sum: 1 } } }
+    ]);
+    
+    const totalEarned = await User.aggregate([
+      { $unwind: '$referrals' },
+      { $match: { 'referrals.status': 'paid' } },
+      { $group: { _id: null, total: { $sum: '$referrals.rewardAmount' } } }
+    ]);
+    
+    const topReferrers = await User.find({
+      'referrals.status': 'paid'
+    })
+    .select('name referralCode referrals')
+    .sort({ 'referrals': -1 })
+    .limit(5);
+    
+    res.json({
+      settings,
+      stats: {
+        totalReferrals: totalReferrals[0]?.total || 0,
+        totalPaid: totalPaid[0]?.total || 0,
+        totalEarned: totalEarned[0]?.total || 0,
+        pendingReferrals: (totalReferrals[0]?.total || 0) - (totalPaid[0]?.total || 0)
+      },
+      topReferrers: topReferrers.map(u => ({
+        name: u.name,
+        referralCode: u.referralCode,
+        count: u.referrals.filter(r => r.status === 'paid').length
+      }))
+    });
+  } catch (err) {
+    console.error('Get referral analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// PAYMENT METHOD ROUTES
+// ============================================
+
+app.get('/api/payment-methods', async (req, res) => {
+  try {
+    const methods = await PaymentMethod.find().sort({ createdAt: -1 });
+    res.json(methods);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/payment-methods/active', async (req, res) => {
+  try {
+    const active = await PaymentMethod.findOne({ isActive: true });
+    res.json(active || null);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/payment-methods', async (req, res) => {
+  try {
+    const { upiId, qrCode, name } = req.body;
+    const method = new PaymentMethod({ upiId, qrCode, name });
+    await method.save();
+    res.status(201).json(method);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/payment-methods/:id', async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    if (isActive) {
+      await PaymentMethod.updateMany({}, { isActive: false });
+    }
+    const method = await PaymentMethod.findByIdAndUpdate(
+      req.params.id,
+      { isActive },
+      { new: true }
+    );
+    res.json(method);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/payment-methods/:id', async (req, res) => {
+  try {
+    await PaymentMethod.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Payment method deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// START SERVER
 // ============================================
 
 const PORT = process.env.PORT || 5002;
