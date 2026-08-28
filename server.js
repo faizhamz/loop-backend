@@ -45,7 +45,9 @@ const variantRoutes = require('./routes/variantRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
-// ✅ Initialize Razorpay with proper error handling
+// ============================================
+// ✅ RAZORPAY INITIALIZATION
+// ============================================
 let razorpay = null;
 try {
   console.log('🔑 Checking Razorpay keys...');
@@ -59,12 +61,49 @@ try {
     });
     console.log('✅ Razorpay initialized successfully');
   } else {
-    console.log('⚠️ Razorpay keys missing — payment disabled. Add keys to enable.');
+    console.log('⚠️ Razorpay keys missing — payment disabled');
   }
 } catch (err) {
   console.error('❌ Razorpay initialization failed:', err.message);
   razorpay = null;
 }
+
+// ============================================
+// ✅ TEST ENDPOINT - Check Razorpay Status
+// ============================================
+app.get('/api/razorpay-status', async (req, res) => {
+  try {
+    const status = {
+      razorpayInitialized: !!razorpay,
+      keyIdExists: !!process.env.RAZORPAY_KEY_ID,
+      keySecretExists: !!process.env.RAZORPAY_KEY_SECRET,
+      keyId: process.env.RAZORPAY_KEY_ID ? process.env.RAZORPAY_KEY_ID.substring(0, 10) + '...' : null,
+      nodeEnv: process.env.NODE_ENV || 'not set'
+    };
+    
+    // Try to create a test order to verify Razorpay works
+    let testOrder = null;
+    if (razorpay) {
+      try {
+        testOrder = await razorpay.orders.create({
+          amount: 100,
+          currency: 'INR',
+          receipt: 'test_receipt'
+        });
+        status.testOrderSuccess = true;
+        status.testOrderId = testOrder.id;
+      } catch (testErr) {
+        status.testOrderSuccess = false;
+        status.testOrderError = testErr.message;
+        status.testOrderErrorCode = testErr.code;
+      }
+    }
+    
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
@@ -223,12 +262,16 @@ app.use('/api/orders', authMiddleware, orderRoutes);
 
 // ✅ Create Razorpay Order
 app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
+  console.log('📦 create-razorpay-order called');
+  console.log('📦 Request body:', req.body);
+  console.log('📦 Razorpay initialized:', !!razorpay);
+  
   try {
     // Check if Razorpay is initialized
     if (!razorpay) {
-      console.error('❌ Razorpay not initialized');
+      console.error('❌ Razorpay not initialized - check environment variables');
       return res.status(503).json({ 
-        error: 'Razorpay is not configured. Please add API keys.',
+        error: 'Razorpay is not configured. Please contact support.',
         details: 'Payment service temporarily unavailable'
       });
     }
@@ -237,6 +280,7 @@ app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
     
     // Validate amount
     if (!amount || amount <= 0) {
+      console.error('❌ Invalid amount:', amount);
       return res.status(400).json({ error: 'Invalid amount' });
     }
     
@@ -244,20 +288,32 @@ app.post('/api/create-razorpay-order', authMiddleware, async (req, res) => {
       amount: Math.round(amount * 100), // Convert to paise
       currency: 'INR',
       receipt: orderId || `order_${Date.now()}`,
-      payment_capture: 1
+      payment_capture: 1,
+      notes: {
+        order_id: orderId || 'no_order_id'
+      }
     };
     
-    console.log('📦 Creating Razorpay order:', { amount, orderId });
+    console.log('📦 Creating Razorpay order with options:', JSON.stringify(options, null, 2));
     
     const order = await razorpay.orders.create(options);
     console.log('✅ Razorpay order created:', order.id);
     
     res.json(order);
   } catch (err) {
-    console.error('❌ Razorpay order error:', err);
+    console.error('❌ Razorpay order error DETAILS:', {
+      message: err.message,
+      code: err.code,
+      statusCode: err.statusCode,
+      response: err.response ? JSON.stringify(err.response) : 'no response'
+    });
+    
+    // Send detailed error response for debugging
     res.status(500).json({ 
       error: 'Failed to create payment order',
-      details: err.message 
+      details: err.message,
+      code: err.code || 'unknown',
+      timestamp: new Date().toISOString()
     });
   }
 });
