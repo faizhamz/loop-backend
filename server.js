@@ -281,6 +281,182 @@ class NotificationService {
 
 const notificationService = new NotificationService();
 
+// ============================================
+// ✅ NOTIFICATION FUNCTIONS
+// ============================================
+
+// Send notification to user
+const sendUserNotification = async (userId, message, type = 'success', link = null) => {
+  try {
+    const Notification = require('./models/Notification');
+    const notification = new Notification({
+      message,
+      type,
+      targetType: 'logged-in',
+      targetUserIds: [userId],
+      link: link || null,
+      isActive: true
+    });
+    await notification.save();
+    
+    // Also send email if configured
+    const user = await User.findById(userId);
+    if (user && notificationService) {
+      await notificationService.sendEmail(
+        user.email,
+        'LOOP Update',
+        `<p>${message}</p>`
+      );
+    }
+    
+    return notification;
+  } catch (err) {
+    console.error('Error sending notification:', err);
+    return null;
+  }
+};
+
+// Send notification to admin
+const sendAdminNotification = async (message, type = 'info', link = null) => {
+  try {
+    const Notification = require('./models/Notification');
+    const notification = new Notification({
+      message,
+      type,
+      targetType: 'all',
+      link: link || null,
+      isActive: true,
+      priority: 'high'
+    });
+    await notification.save();
+    return notification;
+  } catch (err) {
+    console.error('Error sending admin notification:', err);
+    return null;
+  }
+};
+
+// Process referral reward with notifications
+const processReferralReward = async (userId, orderId) => {
+  try {
+    const user = await User.findById(userId);
+    if (!user || !user.referredBy) return null;
+    
+    const settings = await ReferralSettings.getSettings();
+    if (!settings.isEnabled) return null;
+    
+    const order = await Order.findById(orderId);
+    if (!order || order.total < settings.minimumOrderValue) return null;
+    
+    const referrer = await User.findById(user.referredBy);
+    if (!referrer) return null;
+    
+    // Check if already rewarded
+    const alreadyRewarded = referrer.referrals.some(r => 
+      r.userId.toString() === userId && r.status === 'paid'
+    );
+    if (alreadyRewarded) return null;
+    
+    const rewardAmount = settings.rewardAmount;
+    
+    // Credit referrer
+    referrer.wallet.balance += rewardAmount;
+    referrer.wallet.transactions.push({
+      amount: rewardAmount,
+      type: 'credit',
+      description: `Referral reward for ${user.name} (${user.phone}) - Order #${order.orderId}`,
+      createdAt: new Date()
+    });
+    
+    referrer.referrals.push({
+      userId: user._id,
+      orderId: order._id,
+      rewardAmount: rewardAmount,
+      status: 'paid',
+      rewardedAt: new Date()
+    });
+    await referrer.save();
+    
+    user.hasClaimedReferral = true;
+    await user.save();
+    
+    // ✅ Send notification to referrer
+    await sendUserNotification(
+      referrer._id,
+      `🎉 You earned ₹${rewardAmount} referral reward! ${user.name} completed their first order!`,
+      'success',
+      '/profile'
+    );
+    
+    // ✅ Send notification to referred user
+    await sendUserNotification(
+      user._id,
+      `🎉 You helped your friend earn ₹${rewardAmount}! Thank you for being a valued LOOP customer!`,
+      'success',
+      '/profile'
+    );
+    
+    // ✅ Send notification to admin
+    await sendAdminNotification(
+      `💰 Referral Reward: ₹${rewardAmount} credited to ${referrer.name} for referring ${user.name}`,
+      'info',
+      '/admin/referral'
+    );
+    
+    return { referrer, rewardAmount };
+  } catch (err) {
+    console.error('Error processing referral reward:', err);
+    return null;
+  }
+};
+
+// Process welcome bonus with notification
+const processWelcomeBonus = async (userId) => {
+  try {
+    const settings = await ReferralSettings.getSettings();
+    if (!settings.welcomeBonus || settings.welcomeBonus <= 0) return null;
+    
+    const user = await User.findById(userId);
+    if (!user) return null;
+    
+    // Check if already got welcome bonus
+    const hasWelcomeBonus = user.wallet?.transactions?.some(t => 
+      t.description && t.description.includes('Welcome bonus')
+    );
+    if (hasWelcomeBonus) return null;
+    
+    // Credit welcome bonus
+    user.wallet.balance += settings.welcomeBonus;
+    user.wallet.transactions.push({
+      amount: settings.welcomeBonus,
+      type: 'credit',
+      description: '🎉 Welcome bonus!',
+      createdAt: new Date()
+    });
+    await user.save();
+    
+    // ✅ Send notification to user
+    await sendUserNotification(
+      userId,
+      `🎉 Welcome! You've received ₹${settings.welcomeBonus} welcome bonus! Start shopping now!`,
+      'success',
+      '/'
+    );
+    
+    // ✅ Send notification to admin
+    await sendAdminNotification(
+      `🎉 New user ${user.name} signed up and received ₹${settings.welcomeBonus} welcome bonus`,
+      'info',
+      '/admin/users'
+    );
+    
+    return { user, bonusAmount: settings.welcomeBonus };
+  } catch (err) {
+    console.error('Error processing welcome bonus:', err);
+    return null;
+  }
+};
+
 // ============ TEST ROUTE ============
 app.get('/', (req, res) => {
   res.json({ message: 'LOOP API is running' });
@@ -1738,6 +1914,9 @@ app.post('/api/auth/signup', async (req, res) => {
     
     await user.save();
     
+    // ✅ Process welcome bonus with notification
+    await processWelcomeBonus(user._id);
+    
     const token = jwt.sign(
       { userId: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -2286,6 +2465,39 @@ app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async 
     });
   } catch (err) {
     console.error('Get referral analytics error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ Get recent referral activity for admin
+app.get('/api/referral/admin/recent-activity', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Get recent wallet transactions related to referrals
+    const activities = await User.aggregate([
+      { $unwind: '$wallet.transactions' },
+      { 
+        $match: { 
+          'wallet.transactions.description': { 
+            $regex: /Referral reward|Welcome bonus/i 
+          } 
+        } 
+      },
+      { $sort: { 'wallet.transactions.createdAt': -1 } },
+      { $limit: 20 },
+      {
+        $project: {
+          userName: '$name',
+          userEmail: '$email',
+          event: '$wallet.transactions.description',
+          amount: '$wallet.transactions.amount',
+          createdAt: '$wallet.transactions.createdAt'
+        }
+      }
+    ]);
+    
+    res.json(activities);
+  } catch (err) {
+    console.error('Error fetching recent activity:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -14,15 +14,17 @@ const notificationSchema = new mongoose.Schema({
   },
   targetType: {
     type: String,
-    enum: ['all', 'logged-in', 'guest'],
+    enum: ['all', 'logged-in', 'guest', 'specific'],
     default: 'all'
   },
+  targetUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // ✅ For specific users
   link: { type: String, default: '' },
   isDismissible: { type: Boolean, default: true },
   isActive: { type: Boolean, default: true },
   isDeleted: { type: Boolean, default: false },
   publishDate: { type: Date, default: Date.now },
   expiryDate: { type: Date, default: null },
+  readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // ✅ Track who read it
   impressions: { type: Number, default: 0 },
   clicks: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
