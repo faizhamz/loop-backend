@@ -1312,12 +1312,37 @@ app.patch('/api/products/:id/status', async (req, res) => {
 });
 
 // ============================================
-// COUPON ROUTES
+// COUPON ROUTES - UPDATED
 // ============================================
 
 app.get('/api/coupons', async (req, res) => {
   try {
     const coupons = await Coupon.find().sort({ createdAt: -1 });
+    res.json(coupons);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/coupons/available', async (req, res) => {
+  try {
+    const now = new Date();
+    const coupons = await Coupon.find({
+      isActive: true,
+      isDeleted: false,
+      validFrom: { $lte: now },
+      $or: [
+        { validUntil: null },
+        { validUntil: { $gte: now } }
+      ],
+      $or: [
+        { usageLimit: 0 },
+        { $expr: { $lt: ["$usedCount", "$usageLimit"] } }
+      ]
+    })
+    .select('code name description discountType discountValue maxDiscount minOrderValue validUntil')
+    .limit(10);
+    
     res.json(coupons);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1373,16 +1398,25 @@ app.patch('/api/coupons/:id/toggle', async (req, res) => {
   }
 });
 
+// ✅ Updated Coupon Validation with Max Discount
 app.post('/api/coupons/validate', async (req, res) => {
   try {
     const { code, userId, cartTotal } = req.body;
-    const coupon = await Coupon.findOne({ code, isActive: true, isDeleted: false });
+    const coupon = await Coupon.findOne({ code: code.toUpperCase(), isActive: true, isDeleted: false });
 
     if (!coupon) {
       return res.status(404).json({ valid: false, message: 'Invalid coupon code' });
     }
 
     const now = new Date();
+    
+    if (coupon.validFrom && now < coupon.validFrom) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: `Coupon is valid from ${new Date(coupon.validFrom).toLocaleDateString()}` 
+      });
+    }
+    
     if (coupon.validUntil && now > coupon.validUntil) {
       return res.status(400).json({ valid: false, message: 'Coupon has expired' });
     }
@@ -1391,8 +1425,23 @@ app.post('/api/coupons/validate', async (req, res) => {
       return res.status(400).json({ valid: false, message: 'Coupon usage limit reached' });
     }
 
-    if (coupon.userSpecific && coupon.userId.toString() !== userId) {
-      return res.status(400).json({ valid: false, message: 'This coupon is not valid for your account' });
+    if (coupon.userSpecific && userId) {
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(400).json({ valid: false, message: 'User not found' });
+      }
+      
+      const isUserValid = 
+        coupon.userId?.toString() === userId ||
+        coupon.userEmail?.toLowerCase() === user.email?.toLowerCase() ||
+        coupon.userPhone === user.phone;
+      
+      if (!isUserValid) {
+        return res.status(400).json({ 
+          valid: false, 
+          message: 'This coupon is not valid for your account' 
+        });
+      }
     }
 
     if (coupon.minOrderValue > 0 && cartTotal < coupon.minOrderValue) {
@@ -1403,22 +1452,70 @@ app.post('/api/coupons/validate', async (req, res) => {
     }
 
     let discountAmount = 0;
+    let maxDiscountApplied = false;
+    let effectiveDiscountPercent = 0;
+    
     if (coupon.discountType === 'percentage') {
       discountAmount = (cartTotal * coupon.discountValue) / 100;
+      effectiveDiscountPercent = coupon.discountValue;
+      
       if (coupon.maxDiscount > 0 && discountAmount > coupon.maxDiscount) {
         discountAmount = coupon.maxDiscount;
+        maxDiscountApplied = true;
+        // Calculate effective percentage after max discount
+        effectiveDiscountPercent = Math.round((coupon.maxDiscount / cartTotal) * 100);
       }
     } else if (coupon.discountType === 'fixed') {
-      discountAmount = coupon.discountValue;
+      discountAmount = Math.min(coupon.discountValue, cartTotal);
+      effectiveDiscountPercent = Math.round((discountAmount / cartTotal) * 100);
+    } else if (coupon.discountType === 'shipping') {
+      // Shipping discount - handle separately
+      discountAmount = 0; // Will be applied to shipping
     }
 
     res.json({
       valid: true,
-      discountAmount,
+      discountAmount: Math.round(discountAmount * 100) / 100,
       discountPercent: coupon.discountType === 'percentage' ? coupon.discountValue : 0,
+      effectiveDiscountPercent: effectiveDiscountPercent,
+      maxDiscount: coupon.maxDiscount || 0,
+      maxDiscountApplied,
+      couponType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      minOrderValue: coupon.minOrderValue,
+      code: coupon.code,
+      name: coupon.name,
+      description: coupon.description,
       message: 'Coupon applied successfully'
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ User Search for Coupon Assignment
+app.get('/api/users/search', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) {
+      return res.json([]);
+    }
+    
+    const searchRegex = new RegExp(q, 'i');
+    const users = await User.find({
+      $or: [
+        { name: searchRegex },
+        { email: searchRegex },
+        { phone: searchRegex },
+        { refId: searchRegex }
+      ]
+    })
+    .select('_id name email phone refId')
+    .limit(10);
+    
+    res.json(users);
+  } catch (err) {
+    console.error('User search error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1441,7 +1538,10 @@ app.post('/api/coupons/assign-to-user', async (req, res) => {
       discountValue,
       validUntil,
       userSpecific: true,
-      userId,
+      userId: user._id,
+      userEmail: user.email,
+      userName: user.name,
+      userPhone: user.phone,
       usageLimit: 1,
       perUserLimit: 1
     });
