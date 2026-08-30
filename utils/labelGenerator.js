@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
 const handlebars = require('handlebars');
+const chromium = require('@sparticuz/chromium'); // ✅ ADD THIS
 
 // Register handlebars helpers
 handlebars.registerHelper('inc', function(value) {
@@ -67,37 +68,17 @@ const getLogoBase64 = () => {
   return null;
 };
 
-// Find Chrome executable path
-const getChromePath = () => {
-  // Check environment variables first
-  if (process.env.CHROME_PATH) {
-    return process.env.CHROME_PATH;
+// ✅ Get Chrome path using @sparticuz/chromium
+const getChromePath = async () => {
+  try {
+    // @sparticuz/chromium automatically handles Render's environment
+    const executablePath = await chromium.executablePath();
+    console.log(`✅ Chrome found at: ${executablePath}`);
+    return executablePath;
+  } catch (err) {
+    console.error('❌ Failed to get Chrome path:', err.message);
+    return null;
   }
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    return process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
-  
-  // Common paths for different environments
-  const possiblePaths = [
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    '/usr/bin/chrome',
-    '/usr/local/bin/chromium',
-    '/usr/local/bin/chrome',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-  ];
-  
-  for (const chromePath of possiblePaths) {
-    if (fs.existsSync(chromePath)) {
-      console.log(`✅ Chrome found at: ${chromePath}`);
-      return chromePath;
-    }
-  }
-  
-  console.log('⚠️ Chrome not found in common paths');
-  return null;
 };
 
 // Generate shipping label PDF
@@ -155,16 +136,17 @@ const generateShippingLabel = async (labelData) => {
     // Generate HTML
     const html = compiledTemplate(data);
 
-    // Find Chrome path
-    const chromePath = getChromePath();
+    // ✅ Get Chrome path using @sparticuz/chromium
+    const executablePath = await getChromePath();
     
-    if (!chromePath) {
-      console.warn('⚠️ Chrome not found, trying to launch without executablePath');
+    if (!executablePath) {
+      throw new Error('Could not find Chrome executable. Please install @sparticuz/chromium.');
     }
 
-    // Launch browser with puppeteer-core
-    const launchOptions = {
+    // ✅ Launch browser with chromium
+    const browser = await puppeteer.launch({
       headless: 'new',
+      executablePath: executablePath,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -176,14 +158,7 @@ const generateShippingLabel = async (labelData) => {
         '--disable-software-rasterizer',
         '--disable-features=IsolateOrigins,site-per-process'
       ]
-    };
-
-    // Only add executablePath if we found Chrome
-    if (chromePath) {
-      launchOptions.executablePath = chromePath;
-    }
-
-    const browser = await puppeteer.launch(launchOptions);
+    });
 
     const page = await browser.newPage();
 
