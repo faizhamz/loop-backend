@@ -15,28 +15,79 @@ const generateShippingLabel = async (labelData) => {
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    // Helper: draw text with string replacement for special characters
-    const drawText = (text, x, y, size = 8, color = rgb(0, 0, 0), fontType = 'regular') => {
-      // ✅ Replace special characters with ASCII equivalents
-      let safeText = text
-        .replace(/∞/g, '∞')  // Keep infinity symbol - Helvetica supports it
-        .replace(/₹/g, '₹')  // Keep rupee symbol
-        .replace(/[^\x00-\x7F]/g, (char) => {
-          // Replace any other non-ASCII characters with a safe version
-          if (char === '∞') return '∞';
-          if (char === '₹') return '₹';
-          if (char === '❤️') return '<3';
-          if (char === '📮') return '[FROM]';
-          if (char === '📦') return '[TO]';
-          if (char === '📋') return '[ORDER]';
-          if (char === '🚚') return '[COURIER]';
-          if (char === '⚠️') return '[!]';
-          if (char === '✅') return '[OK]';
-          if (char === '⭐') return '[*]';
-          if (char === '✨') return '[*]';
-          return char.replace(/[^\x00-\x7F]/g, '');
-        });
+    // =============================================
+    // ✅ FIND AND LOAD LOGO IMAGE
+    // =============================================
+    let logoImage = null;
+    let logoPath = null;
+    
+    // Try ALL possible image extensions in ALL possible locations
+    const extensions = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+    const folders = [
+      '../public',
+      '../assets',
+      '../images',
+      '../img',
+      '../',
+      '.',
+      'public',
+      'assets',
+      'images',
+      'img'
+    ];
+    
+    for (const folder of folders) {
+      for (const ext of extensions) {
+        const imagePath = path.join(__dirname, folder, `logo.${ext}`);
+        if (fs.existsSync(imagePath)) {
+          try {
+            const imageBytes = fs.readFileSync(imagePath);
+            // Try PNG first
+            if (ext === 'png') {
+              try {
+                logoImage = await pdfDoc.embedPng(imageBytes);
+                logoPath = imagePath;
+                break;
+              } catch {}
+            }
+            // Try JPG
+            if (!logoImage && (ext === 'jpg' || ext === 'jpeg')) {
+              try {
+                logoImage = await pdfDoc.embedJpg(imageBytes);
+                logoPath = imagePath;
+                break;
+              } catch {}
+            }
+            if (logoImage) {
+              logoPath = imagePath;
+              break;
+            }
+          } catch (err) {
+            // Silently skip failed attempts
+          }
+        }
+      }
+      if (logoImage) break;
+    }
 
+    if (logoImage) {
+      console.log(`✅ Logo loaded from: ${logoPath}`);
+    } else {
+      console.warn('⚠️ No logo image found. Using text fallback.');
+    }
+
+    // =============================================
+    // ✅ HELPER: Draw Text
+    // =============================================
+    const drawText = (text, x, y, size = 8, color = rgb(0, 0, 0), fontType = 'regular') => {
+      // Replace special characters with safe ASCII
+      const safeText = text
+        .replace(/[^\x00-\x7F]/g, (char) => {
+          if (char === '₹') return 'Rs.';
+          if (char === '❤️') return '<3';
+          if (char === '∞') return '∞';
+          return '';
+        });
       const f = fontType === 'bold' ? fontBold : font;
       page.drawText(safeText, {
         x,
@@ -50,12 +101,47 @@ const generateShippingLabel = async (labelData) => {
     let y = 400; // Start from top
 
     // =============================================
-    // ✅ LOGO - Use "LOOP" instead of infinity symbol
+    // ✅ LOGO - IMAGE OR TEXT FALLBACK
     // =============================================
-    drawText('LOOP', 15, y, 18, rgb(0.83, 0.69, 0.22), 'bold');
-    y -= 10;
-    drawText('Make your move', 15, y, 7, rgb(0.5, 0.5, 0.5));
-    y -= 10;
+    if (logoImage) {
+      // Calculate dimensions (fit within 160px width, 50px height)
+      const maxWidth = 160;
+      const maxHeight = 50;
+      let logoWidth = logoImage.width;
+      let logoHeight = logoImage.height;
+      
+      // Scale to fit maxWidth
+      if (logoWidth > maxWidth) {
+        logoHeight = (logoHeight / logoWidth) * maxWidth;
+        logoWidth = maxWidth;
+      }
+      // Scale to fit maxHeight
+      if (logoHeight > maxHeight) {
+        logoWidth = (logoWidth / logoHeight) * maxHeight;
+        logoHeight = maxHeight;
+      }
+      
+      const xPos = (288 - logoWidth) / 2; // Center horizontally
+      const yPos = y - logoHeight + 5; // Top alignment
+      
+      page.drawImage(logoImage, {
+        x: xPos,
+        y: yPos,
+        width: logoWidth,
+        height: logoHeight,
+      });
+      
+      console.log(`✅ Logo drawn: ${logoWidth}x${logoHeight}px`);
+      y = y - logoHeight - 5;
+    } else {
+      // Fallback: Text logo
+      drawText('LOOP', 15, y, 18, rgb(0.83, 0.69, 0.22), 'bold');
+      y -= 10;
+      drawText('Make your move', 15, y, 7, rgb(0.5, 0.5, 0.5));
+      y -= 10;
+    }
+
+    // Divider line
     page.drawLine({
       start: { x: 15, y: y },
       end: { x: 273, y: y },
@@ -65,7 +151,7 @@ const generateShippingLabel = async (labelData) => {
     y -= 10;
 
     // =============================================
-    // ✅ FROM
+    // ✅ FROM SECTION
     // =============================================
     drawText('FROM', 15, y, 7, rgb(0.4, 0.4, 0.4), 'bold');
     y -= 10;
@@ -79,7 +165,7 @@ const generateShippingLabel = async (labelData) => {
     y -= 15;
 
     // =============================================
-    // ✅ TO
+    // ✅ TO SECTION
     // =============================================
     drawText('TO', 15, y, 7, rgb(0.4, 0.4, 0.4), 'bold');
     y -= 10;
@@ -120,11 +206,10 @@ const generateShippingLabel = async (labelData) => {
       drawText(`+ ${order.items.length - 3} more items`, 15, y, 7, rgb(0.5, 0.5, 0.5));
       y -= 12;
     }
-
     y -= 5;
 
     // =============================================
-    // ✅ TRACKING
+    // ✅ TRACKING & COURIER
     // =============================================
     drawText(`Tracking: ${label.tracking.number}`, 15, y, 8, rgb(0.83, 0.69, 0.22), 'bold');
     y -= 12;
@@ -132,12 +217,12 @@ const generateShippingLabel = async (labelData) => {
     y -= 15;
 
     // =============================================
-    // ✅ BARCODE (simple text)
+    // ✅ BARCODE (Simple text-based)
     // =============================================
     drawText(label.tracking.number, 15, y, 10, rgb(0, 0, 0), 'bold');
     y -= 12;
 
-    // Simple barcode lines
+    // Barcode lines
     const chars = label.tracking.number.split('');
     let x = 15;
     chars.forEach((char, index) => {
@@ -193,12 +278,15 @@ const generateShippingLabel = async (labelData) => {
   }
 };
 
-// Save label PDF
+// =============================================
+// ✅ SAVE LABEL PDF
+// =============================================
 const saveLabelPDF = async (orderId, pdfBuffer) => {
   try {
     const labelsDir = path.join(__dirname, '../labels');
     if (!fs.existsSync(labelsDir)) {
       fs.mkdirSync(labelsDir, { recursive: true });
+      console.log('📁 Created labels directory:', labelsDir);
     }
 
     const filename = `label-${orderId}.pdf`;
@@ -218,7 +306,9 @@ const saveLabelPDF = async (orderId, pdfBuffer) => {
   }
 };
 
-// Delete label PDF
+// =============================================
+// ✅ DELETE LABEL PDF
+// =============================================
 const deleteLabelPDF = async (orderId) => {
   try {
     const filename = `label-${orderId}.pdf`;
