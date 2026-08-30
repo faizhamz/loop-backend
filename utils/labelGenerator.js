@@ -1,8 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const handlebars = require('handlebars');
-const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
+const puppeteer = require('puppeteer'); // ✅ Full puppeteer
 
 // Register handlebars helpers
 handlebars.registerHelper('inc', function(value) {
@@ -111,33 +110,16 @@ const generateShippingLabel = async (labelData) => {
     // Generate HTML
     const html = compiledTemplate(data);
 
-    // ✅ Get executable path from @sparticuz/chromium
-    console.log('🔍 Getting Chrome executable path...');
-    
-    let executablePath;
-    try {
-      executablePath = await chromium.executablePath();
-      console.log('✅ Chrome found at:', executablePath);
-    } catch (err) {
-      console.error('❌ Failed to get Chrome path:', err.message);
-      throw new Error('Could not find Chrome. Please install Chrome or puppeteer.');
-    }
-
-    // ✅ Launch browser with @sparticuz/chromium
+    // ✅ SIMPLE - Puppeteer handles everything
     console.log('🚀 Launching browser...');
     
     const browser = await puppeteer.launch({
-      executablePath: executablePath,
       headless: 'new',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-accelerated-2d-canvas',
-        '--disable-pdf-viewer',
-        '--disable-webgl',
-        '--disable-software-rasterizer'
+        '--disable-gpu'
       ]
     });
 
