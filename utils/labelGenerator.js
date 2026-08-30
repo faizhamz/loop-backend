@@ -23,92 +23,113 @@ const generateShippingLabel = async (labelData) => {
         }
       });
       
+      // Use Helvetica (supports ₹ symbol)
+      doc.font('Helvetica');
+      
       const chunks = [];
       doc.on('data', chunk => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
       
       // =============================================
-      // ✅ HEADER WITH LOGO
+      // ✅ HEADER WITH LOGO IMAGE
       // =============================================
       
-      // Store logo path - you can place your logo in backend/public/logo.png
-      // For now, using a styled text logo with infinity symbol
+      // Try to load logo image
+      const logoPath = path.join(__dirname, '../public/logo.png');
+      let logoLoaded = false;
       
-      // Main Logo
-      doc.fontSize(18)
-         .font('Helvetica-Bold')
-         .fillColor('#D4AF37')
-         .text('L', 15, 12, { continued: true });
+      if (fs.existsSync(logoPath)) {
+        try {
+          // ✅ Add logo image
+          doc.image(logoPath, 60, 8, {
+            width: 168,
+            height: 30,
+            align: 'center'
+          });
+          logoLoaded = true;
+          console.log('✅ Logo image loaded successfully');
+        } catch (err) {
+          console.log('⚠️ Could not load logo image:', err.message);
+          logoLoaded = false;
+        }
+      } else {
+        console.log('⚠️ Logo file not found at:', logoPath);
+      }
       
-      doc.fontSize(18)
-         .font('Helvetica')
-         .fillColor('#D4AF37')
-         .text('∞', { continued: true });
-      
-      doc.fontSize(18)
-         .font('Helvetica-Bold')
-         .fillColor('#D4AF37')
-         .text('P');
+      // ✅ Fallback text logo if image not found
+      if (!logoLoaded) {
+        doc.fontSize(18)
+           .font('Helvetica-Bold')
+           .fillColor('#D4AF37')
+           .text('LOOP', 15, 12, { align: 'center' });
+      }
       
       // Tagline
       doc.fontSize(7)
          .font('Helvetica')
          .fillColor('#888')
-         .text('Make your move', 15, 34, { align: 'center' });
+         .text('Make your move', 15, logoLoaded ? 42 : 34, { align: 'center' });
       
       // Divider
-      doc.moveTo(15, 42)
-         .lineTo(273, 42)
+      const dividerY = logoLoaded ? 50 : 42;
+      doc.moveTo(15, dividerY)
+         .lineTo(273, dividerY)
          .stroke('#ddd');
       
       // =============================================
       // ✅ FROM SECTION (Store Address)
       // =============================================
+      const startY = dividerY + 10;
+      
       doc.fontSize(7)
          .font('Helvetica-Bold')
          .fillColor('#666')
-         .text('📮 FROM', 15, 52);
+         .text('📮 FROM', 15, startY);
       
       doc.fontSize(8)
          .font('Helvetica')
          .fillColor('#000')
-         .text(label.from.name, 15, 62)
-         .text(label.from.address, 15, 72)
-         .text(`${label.from.city}, ${label.from.state} - ${label.from.pincode}`, 15, 82)
-         .text(`📞 ${label.from.phone}`, 15, 92);
+         .text(label.from.name, 15, startY + 10)
+         .text(label.from.address, 15, startY + 20)
+         .text(`${label.from.city}, ${label.from.state} - ${label.from.pincode}`, 15, startY + 30)
+         .text(`📞 ${label.from.phone}`, 15, startY + 40);
       
       // =============================================
       // ✅ TO SECTION (Customer)
       // =============================================
+      const toStartY = startY + 60;
+      
       doc.fontSize(7)
          .font('Helvetica-Bold')
          .fillColor('#666')
-         .text('📦 TO', 15, 112);
+         .text('📦 TO', 15, toStartY);
       
       doc.fontSize(8)
          .font('Helvetica')
          .fillColor('#000')
-         .text(label.to.name, 15, 122)
-         .text(label.to.address, 15, 132)
-         .text(`${label.to.city}, ${label.to.state} - ${label.to.pincode}`, 15, 142)
-         .text(`📞 ${label.to.phone}`, 15, 152);
+         .text(label.to.name, 15, toStartY + 10)
+         .text(label.to.address, 15, toStartY + 20)
+         .text(`${label.to.city}, ${label.to.state} - ${label.to.pincode}`, 15, toStartY + 30)
+         .text(`📞 ${label.to.phone}`, 15, toStartY + 40);
       
       // =============================================
-      // ✅ ORDER DETAILS (with ₹ symbol)
+      // ✅ ORDER DETAILS
       // =============================================
+      const orderStartY = toStartY + 60;
+      
       doc.fontSize(7)
          .font('Helvetica-Bold')
          .fillColor('#666')
-         .text('📋 ORDER DETAILS', 15, 172);
+         .text('📋 ORDER DETAILS', 15, orderStartY);
       
       doc.fontSize(8)
          .font('Helvetica')
          .fillColor('#000')
-         .text(`Order: ${order.orderId}`, 15, 182)
-         .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-IN')}`, 15, 192)
-         .text(`Items: ${order.items.length} item${order.items.length > 1 ? 's' : ''}`, 15, 202)
-         .text(`Value: ₹${order.total}`, 15, 212);  // ✅ KEPT WITH ₹ SIGN
+         .text(`Order: ${order.orderId}`, 15, orderStartY + 10)
+         .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-IN')}`, 15, orderStartY + 20)
+         .text(`Items: ${order.items.length} item${order.items.length > 1 ? 's' : ''}`, 15, orderStartY + 30)
+         .text(`Value: ₹${order.total}`, 15, orderStartY + 40);
       
       // =============================================
       // ✅ ITEMS LIST
@@ -117,10 +138,19 @@ const generateShippingLabel = async (labelData) => {
          .font('Helvetica')
          .fillColor('#555');
       
-      let itemY = 224;
+      let itemY = orderStartY + 52;
+      
       order.items.slice(0, 3).forEach((item, index) => {
         const sizeText = item.size ? ` (${item.size})` : '';
-        doc.text(`${index + 1}. ${item.name}${sizeText} × ${item.quantity}`, 15, itemY);
+        // ✅ Truncate long names
+        let itemName = item.name;
+        if (itemName.length > 32) {
+          itemName = itemName.substring(0, 29) + '...';
+        }
+        doc.text(`${index + 1}. ${itemName}${sizeText} × ${item.quantity}`, 15, itemY, {
+          width: 230,
+          ellipsis: true
+        });
         itemY += 12;
       });
       
