@@ -45,6 +45,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const variantRoutes = require('./routes/variantRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const shippingLabelRoutes = require('./routes/shippingLabelRoutes');
 
 // ============================================
 // ✅ RAZORPAY INITIALIZATION
@@ -481,6 +482,7 @@ app.use('/uploads', express.static('uploads'));
 app.use('/api/categories', categoryRoutes);
 app.use('/api/cart', authMiddleware, cartRoutes);
 app.use('/api/orders', authMiddleware, orderRoutes);
+app.use('/api/labels', authMiddleware, shippingLabelRoutes);
 
 // ============================================
 // ✅ RAZORPAY PAYMENT ROUTES - FIXED
