@@ -4,6 +4,77 @@ const router = express.Router();
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
+
+// ============================================
+// NOTIFICATION TEMPLATES
+// ============================================
+const statusTemplates = {
+  pending: {
+    icon: '⏳',
+    message: 'Order #{orderId} has been placed and is pending confirmation. We\'ll notify you once it\'s processed.'
+  },
+  processing: {
+    icon: '🔄',
+    message: 'Order #{orderId} is being processed. We\'re carefully preparing your items! 🎁'
+  },
+  shipped: {
+    icon: '🚚',
+    message: '🎉 Order #{orderId} has been shipped! Track your package and get ready to receive your goodies.'
+  },
+  delivered: {
+    icon: '✅',
+    message: '📦 Order #{orderId} has been delivered! We hope you love your purchase. Share your experience with a review! ⭐'
+  },
+  cancelled: {
+    icon: '❌',
+    message: 'Order #{orderId} has been cancelled. If this was a mistake, please contact our support team.'
+  },
+  returned: {
+    icon: '↩️',
+    message: 'Order #{orderId} has been returned. Your refund will be processed within 3-5 business days.'
+  }
+};
+
+// ============================================
+// Helper: Send order status notification
+// ============================================
+const sendOrderStatusNotification = async (order, newStatus) => {
+  try {
+    const template = statusTemplates[newStatus];
+    if (!template) return;
+    
+    const itemNames = order.items.slice(0, 3).map(i => i.name).join(', ');
+    const extraItems = order.items.length > 3 ? ` +${order.items.length - 3} more` : '';
+    const itemsList = `${itemNames}${extraItems}`;
+    
+    const message = template.message
+      .replace('{orderId}', order.orderId)
+      .replace('{items}', itemsList);
+    
+    // Create notification in database
+    const notification = new Notification({
+      message: `${template.icon} ${message}`,
+      type: newStatus === 'cancelled' || newStatus === 'returned' ? 'error' : 'success',
+      priority: newStatus === 'shipped' || newStatus === 'delivered' ? 'high' : 'medium',
+      targetType: 'specific',
+      targetUserIds: order.userId ? [order.userId] : [],
+      link: `/orders/${order.orderId}`,
+      orderId: order._id,
+      orderStatus: newStatus,
+      isActive: true,
+      isDismissible: true
+    });
+    
+    await notification.save();
+    console.log(`📧 Order notification sent for ${order.orderId}: ${newStatus}`);
+    
+    return notification;
+  } catch (err) {
+    console.error('Error sending order notification:', err);
+    return null;
+  }
+};
 
 // ============================================
 // ✅ SPECIFIC ROUTES FIRST (BEFORE /:id)
@@ -135,6 +206,9 @@ router.post('/:orderId/cancel', async (req, res) => {
     });
     await order.save();
     
+    // ✅ Send notification
+    await sendOrderStatusNotification(order, 'cancelled');
+    
     res.json({ message: 'Order cancelled successfully', order });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -172,6 +246,36 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ✅ NEW: Search orders (admin) - Option B with debounce
+router.get('/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) {
+      return res.json([]);
+    }
+    
+    const searchRegex = new RegExp(q.trim(), 'i');
+    
+    const orders = await Order.find({
+      $or: [
+        { orderId: searchRegex },
+        { 'customer.name': searchRegex },
+        { 'customer.email': searchRegex },
+        { 'customer.phone': searchRegex },
+        { 'customer.address.city': searchRegex },
+        { 'customer.address.street': searchRegex }
+      ]
+    })
+    .sort({ createdAt: -1 })
+    .limit(50);
+    
+    res.json(orders);
+  } catch (err) {
+    console.error('Order search error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get single order by ID (admin) - MUST BE LAST
 router.get('/:id', async (req, res) => {
   try {
@@ -201,6 +305,60 @@ router.post('/', async (req, res) => {
       orderData.userId = userId;
     }
     
+    // ✅ Handle wallet payment
+    const { walletUsed = 0, useWallet = false } = req.body;
+    let finalTotal = orderData.total || 0;
+    let walletDeduction = 0;
+    
+    if (useWallet && userId) {
+      const user = await User.findById(userId);
+      if (user && user.wallet && user.wallet.balance > 0) {
+        const availableBalance = user.wallet.balance;
+        
+        if (walletUsed > 0 && walletUsed <= availableBalance) {
+          // Partial payment with wallet
+          walletDeduction = Math.min(walletUsed, finalTotal);
+          finalTotal = finalTotal - walletDeduction;
+          
+          // Deduct from wallet
+          user.wallet.balance -= walletDeduction;
+          user.wallet.transactions.push({
+            amount: -walletDeduction,
+            type: 'debit',
+            description: `Payment for order ${orderId}`,
+            orderId: orderData._id || null,
+            createdAt: new Date()
+          });
+          await user.save();
+          
+          orderData.walletUsed = walletDeduction;
+          orderData.walletRemaining = user.wallet.balance;
+          orderData.total = finalTotal;
+          
+        } else if (availableBalance >= finalTotal) {
+          // Full payment with wallet
+          walletDeduction = finalTotal;
+          finalTotal = 0;
+          
+          user.wallet.balance -= walletDeduction;
+          user.wallet.transactions.push({
+            amount: -walletDeduction,
+            type: 'debit',
+            description: `Full payment for order ${orderId}`,
+            orderId: orderData._id || null,
+            createdAt: new Date()
+          });
+          await user.save();
+          
+          orderData.walletUsed = walletDeduction;
+          orderData.walletRemaining = user.wallet.balance;
+          orderData.paymentStatus = 'paid';
+          orderData.paymentMethod = 'wallet';
+          orderData.total = 0;
+        }
+      }
+    }
+    
     const order = new Order(orderData);
     await order.save();
     
@@ -217,6 +375,11 @@ router.post('/', async (req, res) => {
       });
     }
     
+    // ✅ Send notification for new order
+    if (userId) {
+      await sendOrderStatusNotification(order, 'pending');
+    }
+    
     res.status(201).json(order);
   } catch (err) {
     console.error('Order creation error:', err);
@@ -224,7 +387,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update order status (admin)
+// Update order status (admin) - WITH NOTIFICATION
 router.put('/:id', async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -238,6 +401,10 @@ router.put('/:id', async (req, res) => {
       { new: true }
     );
     if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    // ✅ Send notification on status change
+    await sendOrderStatusNotification(order, req.body.status);
+    
     res.json(order);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -259,7 +426,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// Update order status with timeline (admin)
+// Update order status with timeline (admin) - WITH NOTIFICATION
 router.put('/admin/:id/status', async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -289,13 +456,16 @@ router.put('/admin/:id/status', async (req, res) => {
     });
     await order.save();
     
+    // ✅ Send notification
+    await sendOrderStatusNotification(order, status);
+    
     res.json(order);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// Add tracking to order (admin)
+// Add tracking to order (admin) - WITH NOTIFICATION
 router.post('/:id/tracking', async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -328,6 +498,10 @@ router.post('/:id/tracking', async (req, res) => {
     }
 
     await order.save();
+    
+    // ✅ Send notification for shipped status
+    await sendOrderStatusNotification(order, 'shipped');
+    
     res.json({ success: true, order });
   } catch (err) {
     res.status(400).json({ error: err.message });

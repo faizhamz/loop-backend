@@ -2,46 +2,58 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 
-/**
- * Process and resize uploaded image
- * Generates 3 sizes: thumbnail, medium, large
- */
+// Ensure uploads directory exists
+const uploadDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 const processImage = async (file, productId) => {
   try {
-    // Create directory for product images
-    const uploadDir = path.join(__dirname, '../uploads', productId);
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-
-    // Generate unique filename
     const timestamp = Date.now();
-    const baseName = `${timestamp}-${productId}`;
-
-    // Sizes to generate
+    const ext = path.extname(file.originalname) || '.jpg';
+    const baseFilename = `${productId}-${timestamp}`;
+    
+    // Create product folder
+    const productDir = path.join(uploadDir, productId);
+    if (!fs.existsSync(productDir)) {
+      fs.mkdirSync(productDir, { recursive: true });
+    }
+    
+    // Generate different sizes
     const sizes = [
-      { name: 'thumbnail', width: 150, height: 150, fit: 'cover' },
-      { name: 'medium', width: 500, height: 500, fit: 'contain' },
-      { name: 'large', width: 1200, height: 1200, fit: 'contain' }
+      { width: 1200, suffix: 'large' },    // Full size
+      { width: 800, suffix: 'medium' },     // Product card
+      { width: 400, suffix: 'small' },      // Thumbnail
+      { width: 200, suffix: 'tiny' }        // Mini thumbnail
     ];
-
+    
     const urls = {};
-
+    const baseUrl = `/uploads/${productId}/`;
+    
     for (const size of sizes) {
-      const outputPath = path.join(uploadDir, `${baseName}-${size.name}.jpg`);
+      const filename = `${baseFilename}-${size.suffix}${ext}`;
+      const filepath = path.join(productDir, filename);
       
       await sharp(file.buffer)
-        .resize(size.width, size.height, {
-          fit: size.fit,
-          background: { r: 255, g: 255, b: 255, alpha: 1 }
+        .resize(size.width, null, {
+          withoutEnlargement: true,
+          fit: 'inside'
         })
-        .jpeg({ quality: 80 })
-        .toFile(outputPath);
+        .jpeg({ quality: 80, progressive: true })
+        .toFile(filepath);
       
-      // Store relative URL
-      urls[size.name] = `/uploads/${productId}/${baseName}-${size.name}.jpg`;
+      urls[size.suffix] = `${baseUrl}${filename}`;
     }
-
+    
+    // Also save original
+    const originalFilename = `${baseFilename}-original${ext}`;
+    const originalPath = path.join(productDir, originalFilename);
+    await sharp(file.buffer)
+      .jpeg({ quality: 85 })
+      .toFile(originalPath);
+    urls.original = `${baseUrl}${originalFilename}`;
+    
     return urls;
   } catch (error) {
     console.error('Error processing image:', error);
@@ -49,13 +61,15 @@ const processImage = async (file, productId) => {
   }
 };
 
-/**
- * Delete product images
- */
 const deleteProductImages = async (productId) => {
-  const uploadDir = path.join(__dirname, '../uploads', productId);
-  if (fs.existsSync(uploadDir)) {
-    fs.rmSync(uploadDir, { recursive: true, force: true });
+  try {
+    const productDir = path.join(uploadDir, productId);
+    if (fs.existsSync(productDir)) {
+      fs.rmSync(productDir, { recursive: true, force: true });
+      console.log(`🗑️ Deleted images for product ${productId}`);
+    }
+  } catch (error) {
+    console.error('Error deleting product images:', error);
   }
 };
 

@@ -17,14 +17,19 @@ const notificationSchema = new mongoose.Schema({
     enum: ['all', 'logged-in', 'guest', 'specific'],
     default: 'all'
   },
-  targetUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // ✅ For specific users
+  targetUserIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  
+  // ✅ NEW: Link to order
+  orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
+  orderStatus: { type: String, default: '' },
+  
   link: { type: String, default: '' },
   isDismissible: { type: Boolean, default: true },
   isActive: { type: Boolean, default: true },
   isDeleted: { type: Boolean, default: false },
   publishDate: { type: Date, default: Date.now },
   expiryDate: { type: Date, default: null },
-  readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // ✅ Track who read it
+  readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   impressions: { type: Number, default: 0 },
   clicks: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
@@ -33,5 +38,6 @@ const notificationSchema = new mongoose.Schema({
 
 // Indexes for performance
 notificationSchema.index({ isActive: 1, isDeleted: 1, publishDate: 1, expiryDate: 1 });
+notificationSchema.index({ orderId: 1 });
 
 module.exports = mongoose.model('Notification', notificationSchema);

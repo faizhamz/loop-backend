@@ -1,5 +1,12 @@
 const mongoose = require('mongoose');
 
+// ✅ NEW: FAQ Schema
+const faqSchema = new mongoose.Schema({
+  question: { type: String, required: true },
+  answer: { type: String, required: true },
+  order: { type: Number, default: 0 }
+});
+
 const productSchema = new mongoose.Schema({
   productId: { 
     type: String, 
@@ -36,7 +43,7 @@ const productSchema = new mongoose.Schema({
   // Variants
   hasVariants: { type: Boolean, default: false },
   variants: [{
-    type: { type: String, required: true }, // e.g., "Size", "Color"
+    type: { type: String, required: true },
     name: { type: String, required: true },
     options: [{
       value: { type: String, required: true },
@@ -44,6 +51,9 @@ const productSchema = new mongoose.Schema({
       stock: { type: Number, default: 0 }
     }]
   }],
+  
+  // ✅ NEW: FAQs
+  faqs: [faqSchema],
   
   // Ratings
   avgRating: { type: Number, default: 0 },
@@ -76,5 +86,4 @@ productSchema.virtual('displayPrice').get(function() {
   return this.salePrice && this.salePrice < this.price ? this.salePrice : this.price;
 });
 
-// Ensure we don't overwrite the model
 module.exports = mongoose.models.Product || mongoose.model('Product', productSchema);

@@ -40,7 +40,11 @@ const orderSchema = new mongoose.Schema({
   couponDiscount: { type: Number, default: 0 },
   total: { type: Number, required: true },
   
-  paymentMethod: { type: String, enum: ['upi', 'razorpay'], default: 'upi' },
+  // ✅ NEW: Wallet payment fields
+  walletUsed: { type: Number, default: 0 },
+  walletRemaining: { type: Number, default: 0 },
+  
+  paymentMethod: { type: String, enum: ['upi', 'razorpay', 'wallet'], default: 'upi' },
   paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
   status: { 
     type: String, 

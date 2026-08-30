@@ -23,6 +23,7 @@ const userSchema = new mongoose.Schema({
   
   // Profile fields
   avatar: { type: String, default: '' },
+  avatarBg: { type: String, default: '' },
   gender: { type: String, enum: ['Male', 'Female', 'Other', ''], default: '' },
   dob: { type: Date, default: null },
   isProfileComplete: { type: Boolean, default: false },
@@ -31,7 +32,7 @@ const userSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: true },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
   
-  // ✅ Cart (NEW - for cross-device sync)
+  // Cart
   cart: [{
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     name: String,
@@ -42,6 +43,12 @@ const userSchema = new mongoose.Schema({
     addedAt: { type: Date, default: Date.now }
   }],
   
+  // ✅ NEW: Read notifications tracking
+  readNotifications: [{
+    notificationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Notification' },
+    readAt: { type: Date, default: Date.now }
+  }],
+  
   // Wallet
   wallet: {
     balance: { type: Number, default: 0 },
@@ -49,6 +56,7 @@ const userSchema = new mongoose.Schema({
       amount: Number,
       type: { type: String, enum: ['credit', 'debit', 'refund', 'reward'] },
       description: String,
+      orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
       expiresAt: Date,
       createdAt: { type: Date, default: Date.now }
     }]
