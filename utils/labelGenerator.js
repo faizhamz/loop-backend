@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const puppeteer = require('puppeteer-core');
 const handlebars = require('handlebars');
-const chromium = require('@sparticuz/chromium'); // ✅ ADD THIS
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 
 // Register handlebars helpers
 handlebars.registerHelper('inc', function(value) {
@@ -42,43 +42,22 @@ const generateBarcodeLines = (text) => {
 const getLogoBase64 = () => {
   const possiblePaths = [
     path.join(__dirname, '../public/logo.png'),
-    path.join(__dirname, '../public/logo.jpg'),
-    path.join(__dirname, '../public/logo.jpeg'),
     path.join(__dirname, '../logo.png'),
-    path.join(__dirname, '../assets/logo.png')
   ];
 
   for (const logoPath of possiblePaths) {
     if (fs.existsSync(logoPath)) {
       try {
         const logoBuffer = fs.readFileSync(logoPath);
-        const ext = path.extname(logoPath).substring(1);
-        const mimeType = ext === 'png' ? 'image/png' : 
-                        ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 
-                        'image/png';
-        console.log(`✅ Logo found at: ${logoPath}`);
-        return `data:${mimeType};base64,${logoBuffer.toString('base64')}`;
+        return `data:image/png;base64,${logoBuffer.toString('base64')}`;
       } catch (err) {
-        console.log(`⚠️ Could not read logo at ${logoPath}:`, err.message);
+        console.log(`⚠️ Could not read logo: ${err.message}`);
       }
     }
   }
   
-  console.log('⚠️ No logo image found, using text logo fallback');
+  console.log('⚠️ No logo found, using text fallback');
   return null;
-};
-
-// ✅ Get Chrome path using @sparticuz/chromium
-const getChromePath = async () => {
-  try {
-    // @sparticuz/chromium automatically handles Render's environment
-    const executablePath = await chromium.executablePath();
-    console.log(`✅ Chrome found at: ${executablePath}`);
-    return executablePath;
-  } catch (err) {
-    console.error('❌ Failed to get Chrome path:', err.message);
-    return null;
-  }
 };
 
 // Generate shipping label PDF
@@ -87,7 +66,7 @@ const generateShippingLabel = async (labelData) => {
     const { order, label } = labelData;
 
     if (!compiledTemplate) {
-      throw new Error('Template not loaded. Please check labelTemplate.html exists.');
+      throw new Error('Template not loaded');
     }
 
     // Truncate long item names
@@ -118,11 +97,7 @@ const generateShippingLabel = async (labelData) => {
         phone: label.to.phone || 'N/A'
       },
       orderId: order.orderId,
-      date: new Date(order.createdAt).toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      }),
+      date: new Date(order.createdAt).toLocaleDateString('en-IN'),
       itemsCount: order.items.length,
       total: order.total || 0,
       items: items,
@@ -136,17 +111,24 @@ const generateShippingLabel = async (labelData) => {
     // Generate HTML
     const html = compiledTemplate(data);
 
-    // ✅ Get Chrome path using @sparticuz/chromium
-    const executablePath = await getChromePath();
+    // ✅ Get executable path from @sparticuz/chromium
+    console.log('🔍 Getting Chrome executable path...');
     
-    if (!executablePath) {
-      throw new Error('Could not find Chrome executable. Please install @sparticuz/chromium.');
+    let executablePath;
+    try {
+      executablePath = await chromium.executablePath();
+      console.log('✅ Chrome found at:', executablePath);
+    } catch (err) {
+      console.error('❌ Failed to get Chrome path:', err.message);
+      throw new Error('Could not find Chrome. Please install Chrome or puppeteer.');
     }
 
-    // ✅ Launch browser with chromium
+    // ✅ Launch browser with @sparticuz/chromium
+    console.log('🚀 Launching browser...');
+    
     const browser = await puppeteer.launch({
-      headless: 'new',
       executablePath: executablePath,
+      headless: 'new',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -155,31 +137,30 @@ const generateShippingLabel = async (labelData) => {
         '--disable-accelerated-2d-canvas',
         '--disable-pdf-viewer',
         '--disable-webgl',
-        '--disable-software-rasterizer',
-        '--disable-features=IsolateOrigins,site-per-process'
+        '--disable-software-rasterizer'
       ]
     });
 
+    console.log('✅ Browser launched');
+
     const page = await browser.newPage();
 
-    // Set viewport to label size (4x6 inches at 72 DPI = 288x432)
     await page.setViewport({
       width: 288,
       height: 432,
       deviceScaleFactor: 2
     });
 
-    // Load HTML
     await page.setContent(html, {
       waitUntil: 'networkidle0'
     });
 
-    // Wait for images to load
+    // Wait for images
     await page.waitForFunction(() => {
       const images = document.querySelectorAll('img');
       return Array.from(images).every(img => img.complete);
     }, { timeout: 5000 }).catch(() => {
-      console.log('⚠️ Image loading timeout, continuing...');
+      console.log('⚠️ Image loading timeout');
     });
 
     // Generate PDF
@@ -196,6 +177,7 @@ const generateShippingLabel = async (labelData) => {
     });
 
     await browser.close();
+    console.log('✅ PDF generated, size:', pdfBuffer.length);
 
     return pdfBuffer;
 
@@ -211,7 +193,6 @@ const saveLabelPDF = async (orderId, pdfBuffer) => {
     const labelsDir = path.join(__dirname, '../labels');
     if (!fs.existsSync(labelsDir)) {
       fs.mkdirSync(labelsDir, { recursive: true });
-      console.log('📁 Created labels directory:', labelsDir);
     }
 
     const filename = `label-${orderId}.pdf`;
