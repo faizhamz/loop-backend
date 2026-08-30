@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const Order = require('../models/Order');
 const User = require('../models/User');
+const Contact = require('../models/Contact');
 const { generateShippingLabel } = require('../utils/labelGenerator');
 
 // ============================================
@@ -26,19 +27,21 @@ router.post('/generate/:orderId', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     
+    // ✅ Get store info from Contact (database)
+    const contact = await Contact.getDefault();
+    
+    const storeInfo = {
+      name: 'LOOP Store',
+      address: contact.address || '123 Fashion Street',
+      city: contact.city || 'Mumbai',
+      state: contact.state || 'Maharashtra',
+      pincode: contact.pincode || '400001',
+      phone: contact.phone || '+91 98765 43210',
+      email: contact.email || 'support@loopstore.in'
+    };
+    
     // Generate tracking number
     const trackingNumber = `LOOP${Date.now().toString().slice(-6)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    
-    // Store info
-    const storeInfo = {
-      name: process.env.STORE_NAME || 'LOOP Store',
-      address: process.env.STORE_ADDRESS || '123 Fashion Street',
-      city: process.env.STORE_CITY || 'Mumbai',
-      state: process.env.STORE_STATE || 'Maharashtra',
-      pincode: process.env.STORE_PINCODE || '400001',
-      phone: process.env.STORE_PHONE || '+91 98765 43210',
-      email: process.env.STORE_EMAIL || 'support@loopstore.in'
-    };
     
     const labelData = {
       order,
@@ -72,7 +75,7 @@ router.post('/generate/:orderId', async (req, res) => {
     const pdfBuffer = await generateShippingLabel(labelData);
     console.log('✅ PDF generated, size:', pdfBuffer.length);
     
-    // ✅ Update order with tracking
+    // Update order with tracking
     order.tracking = {
       number: trackingNumber,
       courier: courier || 'delhivery',
@@ -81,7 +84,7 @@ router.post('/generate/:orderId', async (req, res) => {
     };
     await order.save();
     
-    // ✅ SEND PDF DIRECTLY TO BROWSER (NO FILE STORAGE)
+    // ✅ Send PDF directly to browser
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename=label-${order.orderId}.pdf`,
@@ -99,7 +102,7 @@ router.post('/generate/:orderId', async (req, res) => {
 });
 
 // ============================================
-// ✅ VIEW LABEL (Preview in new tab)
+// VIEW LABEL (Preview in new tab)
 // ============================================
 router.get('/preview/:orderId', async (req, res) => {
   try {
@@ -134,15 +137,17 @@ router.get('/preview/:orderId', async (req, res) => {
       return res.status(404).json({ error: 'No tracking number found. Please generate label first.' });
     }
     
-    // Regenerate the label for preview
+    // Get store info from Contact
+    const contact = await Contact.getDefault();
+    
     const storeInfo = {
-      name: process.env.STORE_NAME || 'LOOP Store',
-      address: process.env.STORE_ADDRESS || '123 Fashion Street',
-      city: process.env.STORE_CITY || 'Mumbai',
-      state: process.env.STORE_STATE || 'Maharashtra',
-      pincode: process.env.STORE_PINCODE || '400001',
-      phone: process.env.STORE_PHONE || '+91 98765 43210',
-      email: process.env.STORE_EMAIL || 'support@loopstore.in'
+      name: 'LOOP Store',
+      address: contact.address || '123 Fashion Street',
+      city: contact.city || 'Mumbai',
+      state: contact.state || 'Maharashtra',
+      pincode: contact.pincode || '400001',
+      phone: contact.phone || '+91 98765 43210',
+      email: contact.email || 'support@loopstore.in'
     };
     
     const labelData = {
@@ -175,7 +180,7 @@ router.get('/preview/:orderId', async (req, res) => {
     
     const pdfBuffer = await generateShippingLabel(labelData);
     
-    // ✅ DISPLAY IN BROWSER (for preview)
+    // ✅ Display in browser
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `inline; filename=label-${order.orderId}.pdf`,
