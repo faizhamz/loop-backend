@@ -227,6 +227,46 @@ router.post('/mark-all-read', async (req, res) => {
 });
 
 // ============================================
+// ✅ NEW: AUTH - Clear all notifications (DELETE)
+// ============================================
+router.delete('/clear-all', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+    
+    // Delete all notifications targeting this user
+    const result = await Notification.deleteMany({
+      isDeleted: false,
+      $or: [
+        { targetType: 'all' },
+        { targetType: 'logged-in', targetUserIds: userId },
+        { targetType: 'specific', targetUserIds: userId }
+      ]
+    });
+    
+    // Also clear read notifications tracking
+    await User.findByIdAndUpdate(userId, {
+      $set: { readNotifications: [] }
+    });
+    
+    res.json({ 
+      success: true, 
+      message: 'All notifications cleared',
+      deletedCount: result.deletedCount 
+    });
+  } catch (err) {
+    console.error('Error clearing notifications:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // ADMIN - Get all notifications
 // ============================================
 router.get('/admin', async (req, res) => {
