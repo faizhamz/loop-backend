@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const handlebars = require('handlebars');
 
 // Register handlebars helpers
@@ -39,7 +39,6 @@ const generateBarcodeLines = (text) => {
 
 // Convert image to base64
 const getLogoBase64 = () => {
-  // Try multiple possible logo locations
   const possiblePaths = [
     path.join(__dirname, '../public/logo.png'),
     path.join(__dirname, '../public/logo.jpg'),
@@ -65,6 +64,39 @@ const getLogoBase64 = () => {
   }
   
   console.log('⚠️ No logo image found, using text logo fallback');
+  return null;
+};
+
+// Find Chrome executable path
+const getChromePath = () => {
+  // Check environment variables first
+  if (process.env.CHROME_PATH) {
+    return process.env.CHROME_PATH;
+  }
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  
+  // Common paths for different environments
+  const possiblePaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/usr/bin/chrome',
+    '/usr/local/bin/chromium',
+    '/usr/local/bin/chrome',
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+  ];
+  
+  for (const chromePath of possiblePaths) {
+    if (fs.existsSync(chromePath)) {
+      console.log(`✅ Chrome found at: ${chromePath}`);
+      return chromePath;
+    }
+  }
+  
+  console.log('⚠️ Chrome not found in common paths');
   return null;
 };
 
@@ -123,16 +155,35 @@ const generateShippingLabel = async (labelData) => {
     // Generate HTML
     const html = compiledTemplate(data);
 
-    // Launch browser
-    const browser = await puppeteer.launch({
+    // Find Chrome path
+    const chromePath = getChromePath();
+    
+    if (!chromePath) {
+      console.warn('⚠️ Chrome not found, trying to launch without executablePath');
+    }
+
+    // Launch browser with puppeteer-core
+    const launchOptions = {
       headless: 'new',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-accelerated-2d-canvas',
+        '--disable-pdf-viewer',
+        '--disable-webgl',
+        '--disable-software-rasterizer',
+        '--disable-features=IsolateOrigins,site-per-process'
       ]
-    });
+    };
+
+    // Only add executablePath if we found Chrome
+    if (chromePath) {
+      launchOptions.executablePath = chromePath;
+    }
+
+    const browser = await puppeteer.launch(launchOptions);
 
     const page = await browser.newPage();
 
