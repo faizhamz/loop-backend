@@ -52,14 +52,14 @@ const sendOrderStatusNotification = async (order, newStatus) => {
       .replace('{orderId}', order.orderId)
       .replace('{items}', itemsList);
     
-    // Create notification in database
+    // ✅ Create notification with link to order history
     const notification = new Notification({
       message: `${template.icon} ${message}`,
       type: newStatus === 'cancelled' || newStatus === 'returned' ? 'error' : 'success',
       priority: newStatus === 'shipped' || newStatus === 'delivered' ? 'high' : 'medium',
       targetType: 'specific',
       targetUserIds: order.userId ? [order.userId] : [],
-      link: `/orders/${order.orderId}`,
+      link: `/orders/${order.orderId}`,  // ✅ Link to order history page
       orderId: order._id,
       orderStatus: newStatus,
       isActive: true,
@@ -246,7 +246,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ✅ NEW: Search orders (admin) - Option B with debounce
+// Search orders (admin)
 router.get('/search', async (req, res) => {
   try {
     const { q } = req.query;
@@ -305,7 +305,7 @@ router.post('/', async (req, res) => {
       orderData.userId = userId;
     }
     
-    // ✅ Handle wallet payment
+    // Handle wallet payment
     const { walletUsed = 0, useWallet = false } = req.body;
     let finalTotal = orderData.total || 0;
     let walletDeduction = 0;
@@ -316,11 +316,9 @@ router.post('/', async (req, res) => {
         const availableBalance = user.wallet.balance;
         
         if (walletUsed > 0 && walletUsed <= availableBalance) {
-          // Partial payment with wallet
           walletDeduction = Math.min(walletUsed, finalTotal);
           finalTotal = finalTotal - walletDeduction;
           
-          // Deduct from wallet
           user.wallet.balance -= walletDeduction;
           user.wallet.transactions.push({
             amount: -walletDeduction,
@@ -336,7 +334,6 @@ router.post('/', async (req, res) => {
           orderData.total = finalTotal;
           
         } else if (availableBalance >= finalTotal) {
-          // Full payment with wallet
           walletDeduction = finalTotal;
           finalTotal = 0;
           
@@ -375,7 +372,7 @@ router.post('/', async (req, res) => {
       });
     }
     
-    // ✅ Send notification for new order
+    // Send notification for new order
     if (userId) {
       await sendOrderStatusNotification(order, 'pending');
     }
@@ -387,7 +384,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update order status (admin) - WITH NOTIFICATION
+// Update order status (admin)
 router.put('/:id', async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -402,7 +399,7 @@ router.put('/:id', async (req, res) => {
     );
     if (!order) return res.status(404).json({ error: 'Order not found' });
     
-    // ✅ Send notification on status change
+    // Send notification on status change
     await sendOrderStatusNotification(order, req.body.status);
     
     res.json(order);
@@ -426,7 +423,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// Update order status with timeline (admin) - WITH NOTIFICATION
+// Update order status with timeline (admin)
 router.put('/admin/:id/status', async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -456,7 +453,7 @@ router.put('/admin/:id/status', async (req, res) => {
     });
     await order.save();
     
-    // ✅ Send notification
+    // Send notification
     await sendOrderStatusNotification(order, status);
     
     res.json(order);
@@ -465,7 +462,7 @@ router.put('/admin/:id/status', async (req, res) => {
   }
 });
 
-// Add tracking to order (admin) - WITH NOTIFICATION
+// Add tracking to order (admin)
 router.post('/:id/tracking', async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -499,7 +496,7 @@ router.post('/:id/tracking', async (req, res) => {
 
     await order.save();
     
-    // ✅ Send notification for shipped status
+    // Send notification for shipped status
     await sendOrderStatusNotification(order, 'shipped');
     
     res.json({ success: true, order });
@@ -521,12 +518,104 @@ router.get('/:id/invoice', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    res.json({
-      message: 'Invoice data',
-      orderId: order.orderId,
-      total: order.total,
-      items: order.items
+    // ✅ Generate PDF invoice
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks = [];
+
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => {
+      const pdfBuffer = Buffer.concat(chunks);
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename=invoice-${order.orderId}.pdf`,
+        'Content-Length': pdfBuffer.length
+      });
+      res.send(pdfBuffer);
     });
+
+    // Build invoice
+    doc.fontSize(24).fillColor('#D4AF37').text('LOOP', { align: 'center' });
+    doc.fontSize(14).fillColor('#888').text('Make your move', { align: 'center' }).moveDown();
+    doc.fontSize(20).fillColor('#000').text('INVOICE', { align: 'center' }).moveDown();
+
+    doc.fontSize(12).fillColor('#333');
+    doc.text(`Order ID: ${order.orderId}`, { continued: true })
+       .text(`Date: ${new Date(order.createdAt).toLocaleDateString()}`, { align: 'right' });
+    doc.moveDown();
+
+    doc.fontSize(14).fillColor('#D4AF37').text('Customer Details');
+    doc.fontSize(12).fillColor('#333');
+    doc.text(`Name: ${order.customer?.name || 'Guest'}`);
+    doc.text(`Email: ${order.customer?.email || 'N/A'}`);
+    doc.text(`Phone: ${order.customer?.phone || 'N/A'}`);
+    doc.moveDown();
+
+    doc.fontSize(14).fillColor('#D4AF37').text('Shipping Address');
+    doc.fontSize(12).fillColor('#333');
+    const addr = order.customer?.address;
+    if (addr) {
+      doc.text(`${addr.street || ''}`);
+      doc.text(`${addr.city || ''}, ${addr.state || ''} - ${addr.pincode || ''}`);
+      if (addr.landmark) doc.text(`Landmark: ${addr.landmark}`);
+    }
+    doc.moveDown();
+
+    doc.fontSize(14).fillColor('#D4AF37').text('Items Ordered');
+    doc.fontSize(12).fillColor('#333');
+
+    const tableTop = doc.y;
+    doc.text('Item', 50, tableTop, { width: 200 });
+    doc.text('Qty', 300, tableTop, { width: 50, align: 'center' });
+    doc.text('Price', 400, tableTop, { width: 80, align: 'right' });
+    doc.text('Total', 500, tableTop, { width: 80, align: 'right' });
+    doc.moveDown();
+
+    order.items.forEach((item) => {
+      const y = doc.y;
+      doc.text(item.name, 50, y, { width: 200 });
+      doc.text(String(item.quantity), 300, y, { width: 50, align: 'center' });
+      doc.text(`₹${item.price}`, 400, y, { width: 80, align: 'right' });
+      doc.text(`₹${item.price * item.quantity}`, 500, y, { width: 80, align: 'right' });
+      doc.moveDown();
+    });
+
+    doc.moveDown();
+    const totalY = doc.y;
+    
+    doc.fontSize(12).fillColor('#555');
+    doc.text(`Subtotal: ₹${order.subtotal}`, 400, totalY, { align: 'right' });
+    doc.text(`Shipping: ${order.shipping === 0 ? 'FREE 🎉' : `₹${order.shipping}`}`, 400, doc.y + 20, { align: 'right' });
+    
+    if (order.platformFee > 0) {
+      doc.text(`Platform Fee: ₹${order.platformFee}`, 400, doc.y + 20, { align: 'right' });
+    } else {
+      doc.text(`Platform Fee: FREE 🎉`, 400, doc.y + 20, { align: 'right' });
+    }
+    
+    if (order.handlingFee > 0) {
+      doc.text(`Handling Fee: ₹${order.handlingFee}`, 400, doc.y + 20, { align: 'right' });
+    } else {
+      doc.text(`Handling Fee: FREE 🎉`, 400, doc.y + 20, { align: 'right' });
+    }
+    
+    if (order.discount > 0) {
+      doc.text(`Discount: -₹${order.discount}`, 400, doc.y + 20, { align: 'right' });
+    }
+    if (order.couponDiscount > 0) {
+      doc.text(`Coupon Discount: -₹${order.couponDiscount}`, 400, doc.y + 20, { align: 'right' });
+    }
+    
+    doc.fontSize(16).fillColor('#D4AF37')
+       .text(`Total: ₹${order.total}`, 400, doc.y + 20, { align: 'right' });
+
+    doc.moveDown(2);
+    doc.fontSize(10).fillColor('#888')
+       .text('Thank you for shopping with LOOP!', { align: 'center' })
+       .text('For support: support@loopstore.in | +91 98765 43210', { align: 'center' });
+
+    doc.end();
+    
   } catch (err) {
     console.error('Invoice error:', err);
     res.status(500).json({ error: err.message });
