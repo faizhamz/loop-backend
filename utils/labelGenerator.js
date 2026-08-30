@@ -1,167 +1,176 @@
 const fs = require('fs');
 const path = require('path');
-const handlebars = require('handlebars');
-const puppeteer = require('puppeteer'); // ✅ Full puppeteer
+const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+const { JSDOM } = require('jsdom');
 
-// Register handlebars helpers
-handlebars.registerHelper('inc', function(value) {
-  return parseInt(value) + 1;
-});
-
-handlebars.registerHelper('now', function() {
-  return new Date().toLocaleString();
-});
-
-handlebars.registerHelper('formatDate', function(date) {
-  return new Date(date).toLocaleDateString('en-IN');
-});
-
-// Read and compile template
+// Read template
 const templatePath = path.join(__dirname, 'labelTemplate.html');
-let compiledTemplate = null;
-
-try {
-  const templateHtml = fs.readFileSync(templatePath, 'utf8');
-  compiledTemplate = handlebars.compile(templateHtml);
-  console.log('✅ Label template loaded successfully');
-} catch (err) {
-  console.error('❌ Failed to load label template:', err.message);
-}
-
-// Generate barcode lines
-const generateBarcodeLines = (text) => {
-  const chars = text.split('');
-  return chars.map((char) => ({
-    dark: char.charCodeAt(0) % 2 === 0,
-    width: (char.charCodeAt(0) % 3) + 1
-  }));
-};
-
-// Convert image to base64
-const getLogoBase64 = () => {
-  const possiblePaths = [
-    path.join(__dirname, '../public/logo.png'),
-    path.join(__dirname, '../logo.png'),
-  ];
-
-  for (const logoPath of possiblePaths) {
-    if (fs.existsSync(logoPath)) {
-      try {
-        const logoBuffer = fs.readFileSync(logoPath);
-        return `data:image/png;base64,${logoBuffer.toString('base64')}`;
-      } catch (err) {
-        console.log(`⚠️ Could not read logo: ${err.message}`);
-      }
-    }
-  }
-  
-  console.log('⚠️ No logo found, using text fallback');
-  return null;
-};
+const templateHtml = fs.readFileSync(templatePath, 'utf8');
 
 // Generate shipping label PDF
 const generateShippingLabel = async (labelData) => {
   try {
     const { order, label } = labelData;
 
-    if (!compiledTemplate) {
-      throw new Error('Template not loaded');
-    }
+    // Create a new PDF document
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([288, 432]); // 4x6 inches at 72 DPI
 
-    // Truncate long item names
-    const items = order.items.slice(0, 4).map(item => ({
-      name: item.name.length > 35 ? item.name.substring(0, 32) + '...' : item.name,
-      quantity: item.quantity,
-      size: item.size || '',
-      price: item.price
-    }));
+    // Load font
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    // Prepare data for template
-    const data = {
-      logoBase64: getLogoBase64(),
-      from: {
-        name: label.from.name || 'LOOP Store',
-        address: label.from.address || '123 Fashion Street',
-        city: label.from.city || 'Mumbai',
-        state: label.from.state || 'Maharashtra',
-        pincode: label.from.pincode || '400001',
-        phone: label.from.phone || '+91 98765 43210'
-      },
-      to: {
-        name: label.to.name || 'Customer',
-        address: label.to.address || 'N/A',
-        city: label.to.city || 'N/A',
-        state: label.to.state || 'N/A',
-        pincode: label.to.pincode || 'N/A',
-        phone: label.to.phone || 'N/A'
-      },
-      orderId: order.orderId,
-      date: new Date(order.createdAt).toLocaleDateString('en-IN'),
-      itemsCount: order.items.length,
-      total: order.total || 0,
-      items: items,
-      moreItems: order.items.length > 4 ? order.items.length - 4 : 0,
-      tracking: label.tracking.number,
-      courier: label.tracking.courierName || label.tracking.courier || 'Delhivery',
-      instructions: label.instructions || '',
-      barcodeLines: generateBarcodeLines(label.tracking.number || 'LOOP000000')
+    // Helper: draw text
+    const drawText = (text, x, y, size = 8, color = rgb(0, 0, 0), fontType = 'regular') => {
+      const f = fontType === 'bold' ? fontBold : font;
+      page.drawText(text, {
+        x,
+        y,
+        size,
+        font: f,
+        color: color,
+      });
     };
 
-    // Generate HTML
-    const html = compiledTemplate(data);
+    let y = 400; // Start from top
 
-    // ✅ SIMPLE - Puppeteer handles everything
-    console.log('🚀 Launching browser...');
-    
-    const browser = await puppeteer.launch({
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu'
-      ]
+    // =============================================
+    // ✅ LOGO
+    // =============================================
+    drawText('L∞P', 15, y, 18, rgb(0.83, 0.69, 0.22), 'bold');
+    y -= 10;
+    drawText('Make your move', 15, y, 7, rgb(0.5, 0.5, 0.5));
+    y -= 10;
+    page.drawLine({
+      start: { x: 15, y: y },
+      end: { x: 273, y: y },
+      thickness: 1,
+      color: rgb(0.8, 0.8, 0.8),
+    });
+    y -= 10;
+
+    // =============================================
+    // ✅ FROM
+    // =============================================
+    drawText('📮 FROM', 15, y, 7, rgb(0.4, 0.4, 0.4), 'bold');
+    y -= 10;
+    drawText(label.from.name || 'LOOP Store', 15, y, 8);
+    y -= 10;
+    drawText(label.from.address || '', 15, y, 8);
+    y -= 10;
+    drawText(`${label.from.city || ''}, ${label.from.state || ''} - ${label.from.pincode || ''}`, 15, y, 8);
+    y -= 10;
+    drawText(`📞 ${label.from.phone || ''}`, 15, y, 8);
+    y -= 15;
+
+    // =============================================
+    // ✅ TO
+    // =============================================
+    drawText('📦 TO', 15, y, 7, rgb(0.4, 0.4, 0.4), 'bold');
+    y -= 10;
+    drawText(label.to.name || 'Customer', 15, y, 8);
+    y -= 10;
+    drawText(label.to.address || '', 15, y, 8);
+    y -= 10;
+    drawText(`${label.to.city || ''}, ${label.to.state || ''} - ${label.to.pincode || ''}`, 15, y, 8);
+    y -= 10;
+    drawText(`📞 ${label.to.phone || ''}`, 15, y, 8);
+    y -= 15;
+
+    // =============================================
+    // ✅ ORDER DETAILS
+    // =============================================
+    drawText('📋 ORDER DETAILS', 15, y, 7, rgb(0.4, 0.4, 0.4), 'bold');
+    y -= 10;
+    drawText(`Order: ${order.orderId}`, 15, y, 8);
+    y -= 10;
+    drawText(`Date: ${new Date(order.createdAt).toLocaleDateString('en-IN')}`, 15, y, 8);
+    y -= 10;
+    drawText(`Items: ${order.items.length} items`, 15, y, 8);
+    y -= 10;
+    drawText(`Value: ₹${order.total}`, 15, y, 8);
+    y -= 15;
+
+    // =============================================
+    // ✅ ITEMS LIST
+    // =============================================
+    order.items.slice(0, 3).forEach((item, index) => {
+      const sizeText = item.size ? ` (${item.size})` : '';
+      let name = item.name.length > 30 ? item.name.substring(0, 27) + '...' : item.name;
+      drawText(`${index + 1}. ${name}${sizeText} × ${item.quantity}`, 15, y, 7, rgb(0.3, 0.3, 0.3));
+      y -= 12;
     });
 
-    console.log('✅ Browser launched');
+    if (order.items.length > 3) {
+      drawText(`+ ${order.items.length - 3} more items`, 15, y, 7, rgb(0.5, 0.5, 0.5));
+      y -= 12;
+    }
 
-    const page = await browser.newPage();
+    y -= 5;
 
-    await page.setViewport({
-      width: 288,
-      height: 432,
-      deviceScaleFactor: 2
+    // =============================================
+    // ✅ TRACKING
+    // =============================================
+    drawText(`📦 Tracking: ${label.tracking.number}`, 15, y, 8, rgb(0.83, 0.69, 0.22), 'bold');
+    y -= 12;
+    drawText(`🚚 Courier: ${label.tracking.courierName || label.tracking.courier || 'Delhivery'}`, 15, y, 8);
+    y -= 15;
+
+    // =============================================
+    // ✅ BARCODE (simple text)
+    // =============================================
+    drawText(label.tracking.number, 15, y, 10, rgb(0, 0, 0), 'bold');
+    y -= 12;
+
+    // Simple barcode lines
+    const chars = label.tracking.number.split('');
+    let x = 15;
+    chars.forEach((char, index) => {
+      const width = (char.charCodeAt(0) % 3) + 1;
+      const height = 10;
+      const isDark = index % 2 === 0;
+      page.drawRectangle({
+        x: x,
+        y: y,
+        width: width,
+        height: height,
+        color: isDark ? rgb(0, 0, 0) : rgb(1, 1, 1),
+      });
+      x += width + 1;
     });
+    y -= 15;
 
-    await page.setContent(html, {
-      waitUntil: 'networkidle0'
+    // =============================================
+    // ✅ INSTRUCTIONS
+    // =============================================
+    if (label.instructions) {
+      drawText(`⚠️ ${label.instructions}`, 15, y, 7, rgb(1, 0.3, 0.3), 'bold');
+      y -= 12;
+    }
+
+    // =============================================
+    // ✅ FOOTER
+    // =============================================
+    y = 20;
+    drawText(`Label: LBL-${order.orderId} | ${new Date().toLocaleString()}`, 15, y, 6, rgb(0.6, 0.6, 0.6));
+    y -= 10;
+    drawText('❤️ Thank you for choosing LOOP!', 15, y, 7, rgb(0.83, 0.69, 0.22));
+
+    // =============================================
+    // ✅ CUT LINE
+    // =============================================
+    y = 5;
+    page.drawLine({
+      start: { x: 15, y: y },
+      end: { x: 273, y: y },
+      thickness: 0.5,
+      color: rgb(0.8, 0.8, 0.8),
     });
+    drawText('— Cut Here —', 15, y - 5, 5, rgb(0.7, 0.7, 0.7));
 
-    // Wait for images
-    await page.waitForFunction(() => {
-      const images = document.querySelectorAll('img');
-      return Array.from(images).every(img => img.complete);
-    }, { timeout: 5000 }).catch(() => {
-      console.log('⚠️ Image loading timeout');
-    });
-
-    // Generate PDF
-    const pdfBuffer = await page.pdf({
-      width: '288px',
-      height: '432px',
-      printBackground: true,
-      margin: {
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0
-      }
-    });
-
-    await browser.close();
-    console.log('✅ PDF generated, size:', pdfBuffer.length);
-
-    return pdfBuffer;
+    // Save PDF
+    const pdfBytes = await pdfDoc.save();
+    return Buffer.from(pdfBytes);
 
   } catch (error) {
     console.error('❌ Label generation error:', error);
