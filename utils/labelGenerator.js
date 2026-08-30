@@ -1,272 +1,206 @@
-const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const puppeteer = require('puppeteer');
+const handlebars = require('handlebars');
 
-// Ensure labels directory exists
-const labelsDir = path.join(__dirname, '../labels');
-if (!fs.existsSync(labelsDir)) {
-  fs.mkdirSync(labelsDir, { recursive: true });
+// Register handlebars helpers
+handlebars.registerHelper('inc', function(value) {
+  return parseInt(value) + 1;
+});
+
+handlebars.registerHelper('now', function() {
+  return new Date().toLocaleString();
+});
+
+handlebars.registerHelper('formatDate', function(date) {
+  return new Date(date).toLocaleDateString('en-IN');
+});
+
+// Read and compile template
+const templatePath = path.join(__dirname, 'labelTemplate.html');
+let compiledTemplate = null;
+
+try {
+  const templateHtml = fs.readFileSync(templatePath, 'utf8');
+  compiledTemplate = handlebars.compile(templateHtml);
+  console.log('✅ Label template loaded successfully');
+} catch (err) {
+  console.error('❌ Failed to load label template:', err.message);
 }
+
+// Generate barcode lines
+const generateBarcodeLines = (text) => {
+  const chars = text.split('');
+  return chars.map((char) => ({
+    dark: char.charCodeAt(0) % 2 === 0,
+    width: (char.charCodeAt(0) % 3) + 1
+  }));
+};
+
+// Convert image to base64
+const getLogoBase64 = () => {
+  // Try multiple possible logo locations
+  const possiblePaths = [
+    path.join(__dirname, '../public/logo.png'),
+    path.join(__dirname, '../public/logo.jpg'),
+    path.join(__dirname, '../public/logo.jpeg'),
+    path.join(__dirname, '../logo.png'),
+    path.join(__dirname, '../assets/logo.png')
+  ];
+
+  for (const logoPath of possiblePaths) {
+    if (fs.existsSync(logoPath)) {
+      try {
+        const logoBuffer = fs.readFileSync(logoPath);
+        const ext = path.extname(logoPath).substring(1);
+        const mimeType = ext === 'png' ? 'image/png' : 
+                        ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 
+                        'image/png';
+        console.log(`✅ Logo found at: ${logoPath}`);
+        return `data:${mimeType};base64,${logoBuffer.toString('base64')}`;
+      } catch (err) {
+        console.log(`⚠️ Could not read logo at ${logoPath}:`, err.message);
+      }
+    }
+  }
+  
+  console.log('⚠️ No logo image found, using text logo fallback');
+  return null;
+};
 
 // Generate shipping label PDF
 const generateShippingLabel = async (labelData) => {
-  return new Promise((resolve, reject) => {
-    try {
-      const { order, label } = labelData;
-      
-      const doc = new PDFDocument({
-        size: [288, 432],
-        margin: 15,
-        info: {
-          Title: `Shipping Label ${order.orderId}`,
-          Author: 'LOOP Store'
-        }
-      });
-      
-      // Use Helvetica (supports ₹ symbol)
-      doc.font('Helvetica');
-      
-      const chunks = [];
-      doc.on('data', chunk => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-      
-      // =============================================
-      // ✅ HEADER WITH LOGO IMAGE
-      // =============================================
-      
-      // Try to load logo image
-      const logoPath = path.join(__dirname, '../public/logo.png');
-      let logoLoaded = false;
-      
-      if (fs.existsSync(logoPath)) {
-        try {
-          // ✅ Add logo image
-          doc.image(logoPath, 60, 8, {
-            width: 168,
-            height: 30,
-            align: 'center'
-          });
-          logoLoaded = true;
-          console.log('✅ Logo image loaded successfully');
-        } catch (err) {
-          console.log('⚠️ Could not load logo image:', err.message);
-          logoLoaded = false;
-        }
-      } else {
-        console.log('⚠️ Logo file not found at:', logoPath);
-      }
-      
-      // ✅ Fallback text logo if image not found
-      if (!logoLoaded) {
-        doc.fontSize(18)
-           .font('Helvetica-Bold')
-           .fillColor('#D4AF37')
-           .text('LOOP', 15, 12, { align: 'center' });
-      }
-      
-      // Tagline
-      doc.fontSize(7)
-         .font('Helvetica')
-         .fillColor('#888')
-         .text('Make your move', 15, logoLoaded ? 42 : 34, { align: 'center' });
-      
-      // Divider
-      const dividerY = logoLoaded ? 50 : 42;
-      doc.moveTo(15, dividerY)
-         .lineTo(273, dividerY)
-         .stroke('#ddd');
-      
-      // =============================================
-      // ✅ FROM SECTION (Store Address)
-      // =============================================
-      const startY = dividerY + 10;
-      
-      doc.fontSize(7)
-         .font('Helvetica-Bold')
-         .fillColor('#666')
-         .text('📮 FROM', 15, startY);
-      
-      doc.fontSize(8)
-         .font('Helvetica')
-         .fillColor('#000')
-         .text(label.from.name, 15, startY + 10)
-         .text(label.from.address, 15, startY + 20)
-         .text(`${label.from.city}, ${label.from.state} - ${label.from.pincode}`, 15, startY + 30)
-         .text(`📞 ${label.from.phone}`, 15, startY + 40);
-      
-      // =============================================
-      // ✅ TO SECTION (Customer)
-      // =============================================
-      const toStartY = startY + 60;
-      
-      doc.fontSize(7)
-         .font('Helvetica-Bold')
-         .fillColor('#666')
-         .text('📦 TO', 15, toStartY);
-      
-      doc.fontSize(8)
-         .font('Helvetica')
-         .fillColor('#000')
-         .text(label.to.name, 15, toStartY + 10)
-         .text(label.to.address, 15, toStartY + 20)
-         .text(`${label.to.city}, ${label.to.state} - ${label.to.pincode}`, 15, toStartY + 30)
-         .text(`📞 ${label.to.phone}`, 15, toStartY + 40);
-      
-      // =============================================
-      // ✅ ORDER DETAILS
-      // =============================================
-      const orderStartY = toStartY + 60;
-      
-      doc.fontSize(7)
-         .font('Helvetica-Bold')
-         .fillColor('#666')
-         .text('📋 ORDER DETAILS', 15, orderStartY);
-      
-      doc.fontSize(8)
-         .font('Helvetica')
-         .fillColor('#000')
-         .text(`Order: ${order.orderId}`, 15, orderStartY + 10)
-         .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-IN')}`, 15, orderStartY + 20)
-         .text(`Items: ${order.items.length} item${order.items.length > 1 ? 's' : ''}`, 15, orderStartY + 30)
-         .text(`Value: ₹${order.total}`, 15, orderStartY + 40);
-      
-      // =============================================
-      // ✅ ITEMS LIST
-      // =============================================
-      doc.fontSize(7)
-         .font('Helvetica')
-         .fillColor('#555');
-      
-      let itemY = orderStartY + 52;
-      
-      order.items.slice(0, 3).forEach((item, index) => {
-        const sizeText = item.size ? ` (${item.size})` : '';
-        // ✅ Truncate long names
-        let itemName = item.name;
-        if (itemName.length > 32) {
-          itemName = itemName.substring(0, 29) + '...';
-        }
-        doc.text(`${index + 1}. ${itemName}${sizeText} × ${item.quantity}`, 15, itemY, {
-          width: 230,
-          ellipsis: true
-        });
-        itemY += 12;
-      });
-      
-      if (order.items.length > 3) {
-        doc.text(`+ ${order.items.length - 3} more items`, 15, itemY);
-        itemY += 12;
-      }
-      
-      // =============================================
-      // ✅ TRACKING & COURIER
-      // =============================================
-      const trackingY = Math.max(itemY + 4, 240);
-      
-      doc.fontSize(8)
-         .font('Helvetica-Bold')
-         .fillColor('#D4AF37')
-         .text(`📦 Tracking: ${label.tracking.number}`, 15, trackingY);
-      
-      doc.fontSize(8)
-         .font('Helvetica')
-         .fillColor('#000')
-         .text(`🚚 Courier: ${label.tracking.courierName || label.tracking.courier}`, 15, trackingY + 12);
-      
-      // =============================================
-      // ✅ BARCODE
-      // =============================================
-      const barcodeY = trackingY + 28;
-      const barcodeText = label.tracking.number;
-      
-      doc.fontSize(9)
-         .font('Courier-Bold')
-         .fillColor('#000')
-         .text(barcodeText, 15, barcodeY, {
-           width: 258,
-           align: 'center'
-         });
-      
-      // Simple barcode lines
-      const barcodeChars = barcodeText.split('');
-      let barcodeX = 15;
-      const barcodeLineY = barcodeY + 12;
-      
-      barcodeChars.forEach((char, index) => {
-        const width = (char.charCodeAt(0) % 3) + 1;
-        const height = 8;
-        doc.rect(barcodeX, barcodeLineY, width, height)
-           .fill(index % 2 === 0 ? '#000' : '#fff');
-        barcodeX += width + 1;
-      });
-      
-      // =============================================
-      // ✅ INSTRUCTIONS
-      // =============================================
-      if (label.instructions) {
-        doc.fontSize(7)
-           .font('Helvetica-Bold')
-           .fillColor('#ff4444')
-           .text(`⚠️ ${label.instructions}`, 15, barcodeLineY + 16);
-      }
-      
-      // =============================================
-      // ✅ FOOTER
-      // =============================================
-      const footerY = 395;
-      doc.fontSize(6)
-         .font('Helvetica')
-         .fillColor('#aaa')
-         .text(`Label: LBL-${order.orderId}  |  ${new Date().toLocaleString()}`, 15, footerY, {
-           width: 258,
-           align: 'center'
-         });
-      
-      doc.fontSize(7)
-         .fillColor('#D4AF37')
-         .text('❤️ Thank you for choosing LOOP!', 15, 408, {
-           width: 258,
-           align: 'center'
-         });
-      
-      // Cut line
-      doc.moveTo(15, 420)
-         .lineTo(273, 420)
-         .stroke('#ddd');
-      
-      doc.fontSize(5)
-         .fillColor('#ccc')
-         .text('— Cut Here —', 15, 422, {
-           width: 258,
-           align: 'center'
-         });
-      
-      doc.end();
-      
-    } catch (error) {
-      console.error('PDF generation error:', error);
-      reject(error);
+  try {
+    const { order, label } = labelData;
+
+    if (!compiledTemplate) {
+      throw new Error('Template not loaded. Please check labelTemplate.html exists.');
     }
-  });
+
+    // Truncate long item names
+    const items = order.items.slice(0, 4).map(item => ({
+      name: item.name.length > 35 ? item.name.substring(0, 32) + '...' : item.name,
+      quantity: item.quantity,
+      size: item.size || '',
+      price: item.price
+    }));
+
+    // Prepare data for template
+    const data = {
+      logoBase64: getLogoBase64(),
+      from: {
+        name: label.from.name || 'LOOP Store',
+        address: label.from.address || '123 Fashion Street',
+        city: label.from.city || 'Mumbai',
+        state: label.from.state || 'Maharashtra',
+        pincode: label.from.pincode || '400001',
+        phone: label.from.phone || '+91 98765 43210'
+      },
+      to: {
+        name: label.to.name || 'Customer',
+        address: label.to.address || 'N/A',
+        city: label.to.city || 'N/A',
+        state: label.to.state || 'N/A',
+        pincode: label.to.pincode || 'N/A',
+        phone: label.to.phone || 'N/A'
+      },
+      orderId: order.orderId,
+      date: new Date(order.createdAt).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }),
+      itemsCount: order.items.length,
+      total: order.total || 0,
+      items: items,
+      moreItems: order.items.length > 4 ? order.items.length - 4 : 0,
+      tracking: label.tracking.number,
+      courier: label.tracking.courierName || label.tracking.courier || 'Delhivery',
+      instructions: label.instructions || '',
+      barcodeLines: generateBarcodeLines(label.tracking.number || 'LOOP000000')
+    };
+
+    // Generate HTML
+    const html = compiledTemplate(data);
+
+    // Launch browser
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ]
+    });
+
+    const page = await browser.newPage();
+
+    // Set viewport to label size (4x6 inches at 72 DPI = 288x432)
+    await page.setViewport({
+      width: 288,
+      height: 432,
+      deviceScaleFactor: 2
+    });
+
+    // Load HTML
+    await page.setContent(html, {
+      waitUntil: 'networkidle0'
+    });
+
+    // Wait for images to load
+    await page.waitForFunction(() => {
+      const images = document.querySelectorAll('img');
+      return Array.from(images).every(img => img.complete);
+    }, { timeout: 5000 }).catch(() => {
+      console.log('⚠️ Image loading timeout, continuing...');
+    });
+
+    // Generate PDF
+    const pdfBuffer = await page.pdf({
+      width: '288px',
+      height: '432px',
+      printBackground: true,
+      margin: {
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0
+      }
+    });
+
+    await browser.close();
+
+    return pdfBuffer;
+
+  } catch (error) {
+    console.error('❌ Label generation error:', error);
+    throw error;
+  }
 };
 
 // Save label PDF
 const saveLabelPDF = async (orderId, pdfBuffer) => {
   try {
+    const labelsDir = path.join(__dirname, '../labels');
+    if (!fs.existsSync(labelsDir)) {
+      fs.mkdirSync(labelsDir, { recursive: true });
+      console.log('📁 Created labels directory:', labelsDir);
+    }
+
     const filename = `label-${orderId}.pdf`;
     const filepath = path.join(labelsDir, filename);
-    
+
     fs.writeFileSync(filepath, pdfBuffer);
     console.log(`✅ Label saved: ${filepath}`);
-    
+
     return {
       filename,
       filepath,
       url: `/api/labels/download/${filename}`
     };
   } catch (error) {
-    console.error('Save label error:', error);
+    console.error('❌ Save label error:', error);
     throw error;
   }
 };
@@ -275,8 +209,8 @@ const saveLabelPDF = async (orderId, pdfBuffer) => {
 const deleteLabelPDF = async (orderId) => {
   try {
     const filename = `label-${orderId}.pdf`;
-    const filepath = path.join(labelsDir, filename);
-    
+    const filepath = path.join(__dirname, '../labels', filename);
+
     if (fs.existsSync(filepath)) {
       fs.unlinkSync(filepath);
       console.log(`🗑️ Deleted label: ${filename}`);
@@ -292,6 +226,5 @@ const deleteLabelPDF = async (orderId) => {
 module.exports = {
   generateShippingLabel,
   saveLabelPDF,
-  deleteLabelPDF,
-  labelsDir
+  deleteLabelPDF
 };

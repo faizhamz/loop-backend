@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Shipping Label</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .label {
+      width: 288px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #fff;
+      font-size: 8px;
+      position: relative;
+    }
+    .logo {
+      text-align: center;
+      margin-bottom: 6px;
+    }
+    .logo img {
+      max-width: 150px;
+      height: auto;
+    }
+    .logo-text {
+      font-size: 18px;
+      font-weight: bold;
+      color: #D4AF37;
+    }
+    .tagline {
+      text-align: center;
+      font-size: 7px;
+      color: #888;
+      margin-bottom: 6px;
+    }
+    .divider {
+      border-top: 1px solid #ddd;
+      margin: 6px 0;
+    }
+    .section-title {
+      font-weight: bold;
+      font-size: 7px;
+      color: #666;
+      margin-bottom: 3px;
+    }
+    .section-content {
+      font-size: 8px;
+      color: #000;
+      line-height: 1.4;
+      margin-bottom: 6px;
+    }
+    .section-content .phone {
+      margin-top: 2px;
+    }
+    .order-details-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px 10px;
+      font-size: 8px;
+      margin-bottom: 6px;
+    }
+    .order-details-grid .label {
+      color: #888;
+      font-weight: bold;
+      border: none;
+      padding: 0;
+      width: auto;
+    }
+    .order-details-grid .value {
+      color: #000;
+    }
+    .items-list {
+      font-size: 7px;
+      color: #555;
+      margin-bottom: 6px;
+    }
+    .items-list .item {
+      padding: 2px 0;
+      border-bottom: 1px dotted #eee;
+    }
+    .items-list .item:last-child {
+      border-bottom: none;
+    }
+    .tracking-section {
+      margin: 6px 0;
+    }
+    .tracking-number {
+      font-weight: bold;
+      color: #D4AF37;
+      font-size: 9px;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 1px;
+    }
+    .courier {
+      font-size: 8px;
+      color: #000;
+    }
+    .barcode {
+      text-align: center;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      margin: 4px 0;
+      padding: 4px 0;
+      background: #f9f9f9;
+    }
+    .barcode-lines {
+      display: flex;
+      justify-content: center;
+      gap: 1px;
+      margin: 2px 0 4px;
+    }
+    .barcode-lines .line {
+      display: inline-block;
+      height: 10px;
+    }
+    .barcode-lines .line.dark { background: #000; }
+    .barcode-lines .line.light { background: #fff; }
+    .instructions {
+      font-size: 7px;
+      color: #ff4444;
+      font-weight: bold;
+      margin: 4px 0;
+    }
+    .footer {
+      text-align: center;
+      font-size: 6px;
+      color: #aaa;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid #ddd;
+    }
+    .footer .heart {
+      color: #D4AF37;
+    }
+    .cut-line {
+      text-align: center;
+      font-size: 5px;
+      color: #ccc;
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px dashed #ddd;
+    }
+    .value-amount {
+      font-weight: bold;
+      color: #000;
+    }
+  </style>
+</head>
+<body>
+  <div class="label">
+    <!-- LOGO -->
+    <div class="logo">
+      {{#if logoBase64}}
+        <img src="{{logoBase64}}" alt="LOOP" />
+      {{else}}
+        <span class="logo-text">L∞P</span>
+      {{/if}}
+    </div>
+    <div class="tagline">Make your move</div>
+    <div class="divider"></div>
+
+    <!-- FROM -->
+    <div class="section-title">📮 FROM</div>
+    <div class="section-content">
+      <div>{{from.name}}</div>
+      <div>{{from.address}}</div>
+      <div>{{from.city}}, {{from.state}} - {{from.pincode}}</div>
+      <div class="phone">📞 {{from.phone}}</div>
+    </div>
+
+    <!-- TO -->
+    <div class="section-title">📦 TO</div>
+    <div class="section-content">
+      <div>{{to.name}}</div>
+      <div>{{to.address}}</div>
+      <div>{{to.city}}, {{to.state}} - {{to.pincode}}</div>
+      <div class="phone">📞 {{to.phone}}</div>
+    </div>
+
+    <!-- ORDER DETAILS -->
+    <div class="section-title">📋 ORDER DETAILS</div>
+    <div class="order-details-grid">
+      <div><span class="label">Order:</span> <span class="value">{{orderId}}</span></div>
+      <div><span class="label">Date:</span> <span class="value">{{date}}</span></div>
+      <div><span class="label">Items:</span> <span class="value">{{itemsCount}} items</span></div>
+      <div><span class="label">Value:</span> <span class="value value-amount">₹{{total}}</span></div>
+    </div>
+
+    <!-- ITEMS LIST -->
+    <div class="items-list">
+      {{#each items}}
+        <div class="item">{{inc @index}}. {{this.name}}{{#if this.size}} ({{this.size}}){{/if}} × {{this.quantity}}</div>
+      {{/each}}
+      {{#if moreItems}}
+        <div class="item">+ {{moreItems}} more items</div>
+      {{/if}}
+    </div>
+
+    <!-- TRACKING -->
+    <div class="tracking-section">
+      <div><span class="tracking-number">📦 Tracking: {{tracking}}</span></div>
+      <div class="courier">🚚 Courier: {{courier}}</div>
+    </div>
+
+    <!-- BARCODE -->
+    <div class="barcode">
+      {{tracking}}
+    </div>
+    <div class="barcode-lines">
+      {{#each barcodeLines}}
+        <span class="line {{#if this.dark}}dark{{else}}light{{/if}}" style="width:{{this.width}}px;"></span>
+      {{/each}}
+    </div>
+
+    <!-- INSTRUCTIONS -->
+    {{#if instructions}}
+      <div class="instructions">⚠️ {{instructions}}</div>
+    {{/if}}
+
+    <!-- FOOTER -->
+    <div class="footer">
+      Label: LBL-{{orderId}} | {{now}}
+      <br />
+      <span class="heart">❤️</span> Thank you for choosing LOOP!
+    </div>
+
+    <div class="cut-line">— Cut Here —</div>
+  </div>
+</body>
+</html>
