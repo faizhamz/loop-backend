@@ -141,6 +141,8 @@ async function cleanupPendingOrders() {
       {
         status: 'cancelled',
         paymentStatus: 'failed',
+        failedReason: 'Payment not completed within 30 minutes',
+        failedAt: new Date(),
         $push: {
           timeline: {
             status: 'cancelled',
@@ -232,20 +234,6 @@ class NotificationService {
       return null;
     }
   }
-
-  async notifyNewOrder(order) {
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@loopstore.in';
-    const subject = `🛍️ New Order #${order.orderId}`;
-    const html = `
-      <h2>New Order Received! 🎉</h2>
-      <p><strong>Order ID:</strong> ${order.orderId}</p>
-      <p><strong>Customer:</strong> ${order.customer?.name || 'Guest'}</p>
-      <p><strong>Total:</strong> ₹${order.total}</p>
-      <p><strong>Items:</strong> ${order.items?.length || 0} items</p>
-      <p><a href="${process.env.ADMIN_URL || 'https://loopstore.in/admin'}">View Order</a></p>
-    `;
-    return this.sendEmail(adminEmail, subject, html);
-  }
 }
 
 const notificationService = new NotificationService();
@@ -256,7 +244,6 @@ const notificationService = new NotificationService();
 
 const sendUserNotification = async (userId, message, type = 'success', link = null) => {
   try {
-    const Notification = require('./models/Notification');
     const notification = new Notification({
       message,
       type,
@@ -283,14 +270,14 @@ const sendUserNotification = async (userId, message, type = 'success', link = nu
   }
 };
 
-const sendAdminNotification = async (message, type = 'info', link = null) => {
+const sendAdminNotification = async (message, type = 'info', link = null, orderId = null) => {
   try {
-    const Notification = require('./models/Notification');
     const notification = new Notification({
       message,
       type,
       targetType: 'all',
       link: link || null,
+      orderId: orderId || null,
       isActive: true,
       priority: 'high'
     });
@@ -438,7 +425,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/cart', authMiddleware, cartRoutes);
 app.use('/api/orders', authMiddleware, orderRoutes);
 
-// ✅ SHIPROCKET ROUTES (NEW)
+// ✅ SHIPROCKET ROUTES
 app.use('/api/shiprocket', shiprocketRoutes);
 app.use('/api/webhooks/shiprocket', shiprocketWebhook);
 
@@ -594,6 +581,19 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
         }
       }
 
+      // ✅ Notify admin — payment confirmed
+      try {
+        await sendAdminNotification(
+          `💰 Payment received for Order #${order.orderId} — ₹${order.total} · Ready to ship`,
+          'success',
+          `/admin`,
+          order._id
+        );
+        console.log(`🔔 Admin notification: Payment confirmed for ${order.orderId}`);
+      } catch (e) {
+        console.error('Admin payment notification error:', e.message);
+      }
+
       // Send order confirmation via email + WhatsApp
       try {
         const { sendStatusEmail } = require('./services/emailTemplates');
@@ -624,7 +624,7 @@ app.post('/api/verify-razorpay-payment', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ RAZORPAY WEBHOOK (now handles refund events too)
+// ✅ RAZORPAY WEBHOOK
 app.post('/api/razorpay-webhook', async (req, res) => {
   try {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
@@ -678,23 +678,20 @@ app.post('/api/razorpay-webhook', async (req, res) => {
             }
           }
 
+          // Notify admin
+          try {
+            await sendAdminNotification(
+              `💰 Payment received for Order #${order.orderId} — ₹${order.total} · Ready to ship`,
+              'success',
+              `/admin`,
+              order._id
+            );
+          } catch (e) {
+            console.error('Admin payment notification error:', e.message);
+          }
+
           console.log('✅ Order updated via webhook:', orderId);
         }
-      }
-    }
-
-    // ✅ NEW: Handle refund completion
-    if (event === 'refund.processed' || event === 'refund.created') {
-      try {
-        const refund = payload.refund.entity;
-        const { markRefundComplete } = require('./services/refundService');
-        const order = await Order.findOne({ 'refund.razorpayRefundId': refund.id });
-        if (order && event === 'refund.processed') {
-          await markRefundComplete(order._id, refund.id);
-          console.log('✅ Refund marked complete via webhook:', order.orderId);
-        }
-      } catch (e) {
-        console.error('Refund webhook error:', e.message);
       }
     }
 
@@ -793,6 +790,8 @@ app.post('/api/admin/cleanup-pending-orders', authMiddleware, adminMiddleware, a
       {
         status: 'cancelled',
         paymentStatus: 'failed',
+        failedReason: 'Order auto-cancelled due to payment timeout (30 minutes)',
+        failedAt: new Date(),
         $push: {
           timeline: {
             status: 'cancelled',
@@ -835,6 +834,40 @@ app.get('/api/admin/cleanup-stats', authMiddleware, adminMiddleware, async (req,
       canCleanup: expiredPendingOrders > 0
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// ✅ ADMIN: FAILED ORDERS
+// ============================================
+app.get('/api/admin/failed-orders', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { days = 30 } = req.query;
+    const since = new Date(Date.now() - parseInt(days) * 24 * 60 * 60 * 1000);
+
+    const failedOrders = await Order.find({
+      createdAt: { $gte: since },
+      $or: [
+        { paymentStatus: 'failed' },
+        { status: 'cancelled', paymentStatus: 'pending' }
+      ]
+    })
+    .sort({ createdAt: -1 })
+    .limit(200);
+
+    const stats = {
+      totalFailed: failedOrders.length,
+      abandoned: failedOrders.filter(o =>
+        o.status === 'cancelled' && o.paymentStatus === 'pending'
+      ).length,
+      failedPayment: failedOrders.filter(o => o.paymentStatus === 'failed').length,
+      totalValueLost: failedOrders.reduce((sum, o) => sum + (o.total || 0), 0)
+    };
+
+    res.json({ orders: failedOrders, stats, period: parseInt(days) });
+  } catch (err) {
+    console.error('Failed orders error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -2040,7 +2073,6 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
 app.get('/api/referral/settings', async (req, res) => {
   try {
-    const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
     res.json({
       isEnabled: settings.isEnabled,
@@ -2058,7 +2090,6 @@ app.get('/api/referral/settings', async (req, res) => {
 
 app.put('/api/referral/settings', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
     const { isEnabled, rewardAmount, minimumOrderValue, rewardDescription, welcomeBonus, maxReferralsPerUser } = req.body;
 
@@ -2090,7 +2121,6 @@ app.get('/api/referral/my-info', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
 
     const totalEarned = user.referrals
@@ -2177,7 +2207,6 @@ app.post('/api/referral/process-reward', authMiddleware, async (req, res) => {
     const { orderId } = req.body;
     const userId = req.userId;
 
-    const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
 
     if (!settings.isEnabled) {
@@ -2292,7 +2321,6 @@ app.get('/api/referral/leaderboard', async (req, res) => {
 
 app.get('/api/referral/admin/analytics', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const ReferralSettings = require('./models/ReferralSettings');
     const settings = await ReferralSettings.getSettings();
 
     const totalReferrals = await User.aggregate([
@@ -2440,4 +2468,5 @@ app.listen(PORT, () => {
   console.log(`📨 Shiprocket webhook: http://localhost:${PORT}/api/webhooks/shiprocket`);
   console.log(`📊 Marketing API: http://localhost:${PORT}/api/marketing/analytics`);
   console.log(`🗺️  Sitemap: http://localhost:${PORT}/sitemap.xml`);
+  console.log(`❌ Failed orders: http://localhost:${PORT}/api/admin/failed-orders`);
 });

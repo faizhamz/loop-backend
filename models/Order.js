@@ -27,7 +27,7 @@ const orderSchema = new mongoose.Schema({
   },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   items: [orderItemSchema],
-  
+
   // ===== ORDER BREAKDOWN =====
   subtotal: { type: Number, required: true, default: 0 },
   shipping: { type: Number, default: 60 },
@@ -39,19 +39,19 @@ const orderSchema = new mongoose.Schema({
   couponCode: { type: String, default: '' },
   couponDiscount: { type: Number, default: 0 },
   total: { type: Number, required: true },
-  
-  // ✅ NEW: Wallet payment fields
+
+  // Wallet payment fields
   walletUsed: { type: Number, default: 0 },
   walletRemaining: { type: Number, default: 0 },
-  
+
   paymentMethod: { type: String, enum: ['upi', 'razorpay', 'wallet'], default: 'upi' },
   paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
-  status: { 
-    type: String, 
-    enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned'], 
-    default: 'pending' 
+  status: {
+    type: String,
+    enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returned'],
+    default: 'pending'
   },
-  
+
   // Tracking Information
   tracking: {
     number: { type: String, default: '' },
@@ -60,7 +60,32 @@ const orderSchema = new mongoose.Schema({
     url: { type: String, default: '' },
     updatedAt: { type: Date, default: null }
   },
-  
+
+  // ===== SHIPROCKET =====
+  shiprocket: {
+    shipmentId: { type: String, default: '' },
+    awbCode: { type: String, default: '', index: true },
+    courierName: { type: String, default: '' },
+    courierCompanyId: { type: Number, default: null },
+    pickupScheduledDate: { type: Date, default: null },
+    etd: { type: Date, default: null },
+    currentStatus: { type: String, default: '' },
+    currentStatusCode: { type: Number, default: 0 },
+    scans: [{
+      activity: String,
+      location: String,
+      date: Date
+    }],
+    labelUrl: { type: String, default: '' },
+    manifestUrl: { type: String, default: '' },
+    invoiceUrl: { type: String, default: '' },
+    isReturn: { type: Boolean, default: false },
+    returnShipmentId: { type: String, default: '' },
+    returnAwbCode: { type: String, default: '' },
+    ndrAttempts: { type: Number, default: 0 },
+    lastWebhookAt: { type: Date, default: null }
+  },
+
   // Payment Details
   paymentDetails: {
     razorpay_payment_id: { type: String, default: '' },
@@ -68,22 +93,25 @@ const orderSchema = new mongoose.Schema({
     razorpay_signature: { type: String, default: '' },
     capturedAt: { type: Date, default: null }
   },
-  
+
+  // ===== FAILED ORDER TRACKING =====
+  failedReason: { type: String, default: '' },
+  failedAt: { type: Date, default: null },
+
   timeline: [{
     status: String,
     description: String,
     timestamp: { type: Date, default: Date.now }
   }],
-  
+
   postOrderRating: { type: Number, min: 1, max: 5 },
   postOrderComment: { type: String, default: '' },
   postOrderRatedAt: { type: Date },
-  
+
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
 
-// Auto-generate orderId
 orderSchema.pre('save', function(next) {
   this.updatedAt = new Date();
   if (!this.orderId) {
@@ -101,36 +129,35 @@ orderSchema.pre('save', function(next) {
   next();
 });
 
-// Method to update status with timeline
 orderSchema.methods.updateStatus = function(newStatus, description = '') {
   const validTransitions = {
     'pending': ['processing', 'cancelled'],
     'processing': ['shipped', 'cancelled'],
-    'shipped': ['delivered', 'cancelled'],
+    'shipped': ['delivered', 'cancelled', 'returned'],
     'delivered': ['returned'],
     'cancelled': [],
     'returned': []
   };
-  
+
   if (!validTransitions[this.status]?.includes(newStatus)) {
     throw new Error(`Invalid status transition: ${this.status} → ${newStatus}`);
   }
-  
+
   this.status = newStatus;
   this.timeline.push({
     status: newStatus,
     description: description || `Order ${newStatus}`,
     timestamp: new Date()
   });
-  
+
   return this.save();
 };
 
-// Indexes
 orderSchema.index({ orderId: 1 }, { unique: true });
 orderSchema.index({ userId: 1 });
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ paymentStatus: 1 });
+orderSchema.index({ 'shiprocket.awbCode': 1 });
 
 module.exports = mongoose.models.Order || mongoose.model('Order', orderSchema);
