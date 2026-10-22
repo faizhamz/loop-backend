@@ -66,6 +66,14 @@ const notifyAdminNewOrder = async (order) => {
     });
     await notification.save();
     console.log(`🔔 Admin notification: New order ${order.orderId}`);
+
+    // ✅ Also send admin email
+    try {
+      const { sendAdminEmail } = require('../services/emailTemplates');
+      await sendAdminEmail(order, 'admin_new_order');
+    } catch (e) {
+      console.error('Admin new-order email error:', e.message);
+    }
   } catch (err) {
     console.error('Admin new-order notification error:', err);
   }
@@ -86,6 +94,14 @@ const notifyAdminPaymentConfirmed = async (order) => {
     });
     await notification.save();
     console.log(`🔔 Admin notification: Payment confirmed for ${order.orderId}`);
+
+    // ✅ Also send admin email
+    try {
+      const { sendAdminEmail } = require('../services/emailTemplates');
+      await sendAdminEmail(order, 'admin_payment_confirmed');
+    } catch (e) {
+      console.error('Admin payment email error:', e.message);
+    }
   } catch (err) {
     console.error('Admin payment notification error:', err);
   }

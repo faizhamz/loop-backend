@@ -77,88 +77,175 @@ const sendTemplate = async ({ to, templateName, languageCode = 'en', components 
 // ============================================
 // TEMPLATE MAPPINGS
 // ============================================
-// NOTE: Template names must match EXACTLY what you register in Meta.
+// NOTE: Template names MUST match EXACTLY what you register in Meta.
 // Body parameters are positional {{1}}, {{2}}, etc.
+// Buttons are appended as component type "button" if the template has dynamic URL buttons.
 
 const templates = {
+  // ────────────── ORDER CONFIRMED ──────────────
+  // Meta template name: loop_order_confirmed
+  // Body params: {{1}} name, {{2}} orderId, {{3}} total
   order_confirmed: (order) => ({
     templateName: 'loop_order_confirmed',
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
-        { type: 'text', text: order.orderId },
-        { type: 'text', text: `₹${order.total}` }
-      ]
-    }]
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.orderId },
+          { type: 'text', text: `₹${order.total}` }
+        ]
+      },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: order.orderId }]
+      }
+    ]
   }),
 
+  // ────────────── ORDER SHIPPED ──────────────
+  // Meta template name: loop_order_shipped
+  // Body params: {{1}} name, {{2}} orderId, {{3}} courier, {{4}} awb
   order_shipped: (order) => ({
     templateName: 'loop_order_shipped',
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
-        { type: 'text', text: order.orderId },
-        { type: 'text', text: order.shiprocket?.courierName || 'our courier' },
-        { type: 'text', text: order.shiprocket?.awbCode || order.tracking?.number || 'N/A' }
-      ]
-    }]
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.orderId },
+          { type: 'text', text: order.shiprocket?.courierName || order.tracking?.courierName || 'our courier' },
+          { type: 'text', text: order.shiprocket?.awbCode || order.tracking?.number || 'N/A' }
+        ]
+      },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: order.shiprocket?.awbCode || order.tracking?.number || '' }]
+      }
+    ]
   }),
 
+  // ────────────── OUT FOR DELIVERY ──────────────
+  // Meta template name: loop_out_for_delivery
+  // Body params: {{1}} name, {{2}} orderId
   order_out_for_delivery: (order) => ({
     templateName: 'loop_out_for_delivery',
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
-        { type: 'text', text: order.orderId }
-      ]
-    }]
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.orderId }
+        ]
+      }
+    ]
   }),
 
+  // ────────────── DELIVERED ──────────────
+  // Meta template name: loop_order_delivered
+  // Body params: {{1}} name, {{2}} orderId
   order_delivered: (order) => ({
     templateName: 'loop_order_delivered',
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
-        { type: 'text', text: order.orderId }
-      ]
-    }]
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.orderId }
+        ]
+      },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: order.orderId }]
+      }
+    ]
   }),
 
+  // ────────────── NDR ──────────────
+  // Meta template name: loop_delivery_failed
+  // Body params: {{1}} name, {{2}} orderId
   order_ndr: (order) => ({
     templateName: 'loop_delivery_failed',
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
-        { type: 'text', text: order.orderId }
-      ]
-    }]
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.orderId }
+        ]
+      }
+    ]
   }),
 
+  // ────────────── CANCELLED ──────────────
+  // Meta template name: loop_order_cancelled
+  // Body params: {{1}} name, {{2}} orderId
   order_cancelled: (order) => ({
     templateName: 'loop_order_cancelled',
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
-        { type: 'text', text: order.orderId }
-      ]
-    }]
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.orderId }
+        ]
+      }
+    ]
   }),
 
+  // ────────────── RETURNED ──────────────
+  // Meta template name: loop_return_initiated
+  // Body params: {{1}} name, {{2}} orderId
   order_returned: (order) => ({
     templateName: 'loop_return_initiated',
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
-        { type: 'text', text: order.orderId }
-      ]
-    }]
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.orderId }
+        ]
+      }
+    ]
+  }),
+
+  // ────────────── WELCOME BONUS ──────────────
+  // Meta template name: loop_welcome_bonus
+  // Body params: {{1}} name, {{2}} amount
+  welcome_bonus: (order) => ({
+    templateName: 'loop_welcome_bonus',
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: `₹${order.welcomeAmount || 50}` }
+        ]
+      }
+    ]
+  }),
+
+  // ────────────── REFERRAL REWARD ──────────────
+  // Meta template name: loop_referral_reward
+  // Body params: {{1}} name, {{2}} friendName, {{3}} amount
+  referral_reward: (order) => ({
+    templateName: 'loop_referral_reward',
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: order.customer?.name?.split(' ')[0] || 'there' },
+          { type: 'text', text: order.friendName || 'your friend' },
+          { type: 'text', text: `₹${order.rewardAmount || 100}` }
+        ]
+      }
+    ]
   })
 };
 
